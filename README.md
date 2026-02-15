@@ -61,39 +61,6 @@ SDMEP fundamentally changes the training loop. Instead of `Forward -> Backward -
 
 SDMEP is implemented as a drop-in PyTorch Optimizer.
 
-```python
-import torch
-from sdmep import SDMEPOptimizer, EPLayer
-
-# 1. Define your Energy-Based Model
-model = torch.nn.Sequential(
-    EPLayer(784, 1000),
-    torch.nn.Hardtanh(),
-    EPLayer(1000, 10)
-)
-
-# 2. Initialize SDMEP Optimizer
-# dion_thresh determines when to switch from Muon (Exact) to Dion (Low-Rank)
-optimizer = SDMEPOptimizer(
-    model.parameters(), 
-    lr=0.05, 
-    gamma=0.95,             # Strict spectral constraint
-    dion_thresh=500000      # Use Dion for matrices > 500k params
-)
-
-# 3. Training Loop
-model.train()
-for x, y in loader:
-    optimizer.zero_grad()
-    
-    # A. Compute Contrastive Gradients (The Physics Simulation)
-    # This function populates p.grad using the Free/Nudged phases
-    model.compute_ep_gradients(x, y, beta=0.5)
-    
-    # B. Step (Apply Muon/Dion + Spectral Constraint)
-    optimizer.step()
-```
-
 ---
 
 ## 📊 Benchmarks & Honest Performance
@@ -127,11 +94,6 @@ SDMEP is an experimental algorithm. Here is the honest breakdown of how it compa
 ---
 
 ## 🤝 Contributing
-
-We are looking for:
-1.  **Mathematicians** to refine the Dion low-rank approximation bounds.
-2.  **CUDA Engineers** to write custom kernels for the "Settling" phase.
-3.  **Bio-inspired Researchers** to test this on complex tasks (CIFAR, ImageNet).
 
 **Join us in breaking the Backprop barrier!**
 

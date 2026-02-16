@@ -1,6 +1,6 @@
 import torch
 import pytest
-from mep.optim import SDMEPOptimizer
+from mep.optimizers import SDMEPOptimizer
 
 def test_spectral_constraint_scaling(device):
     """Test that spectral constraint correctly scales down large norms."""

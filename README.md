@@ -3,9 +3,11 @@
 
 ![MEP Architecture](https://raw.githubusercontent.com/your-username/mep/main/docs/assets/mep_banner.png)
 
-**SDMEP** is an optimization framework that merges **Equilibrium Propagation (EP)** with spectral control and geometry-aware updates. It is designed to train deep neural networks **without Backpropagation**, using local learning rules that are biologically plausible, hardware-friendly, and mathematically robust.
+**SDMEP** is a PyTorch-based optimization framework that provides robust training methods for deep neural networks. It implements two primary modes of operation:
+1.  **Standard Backpropagation** enhanced with **Muon** (Newton-Schulz) and **Dion** (Low-Rank SVD) geometry-aware updates.
+2.  **Equilibrium Propagation (EP)**, a biology-inspired gradient estimation method that theoretically avoids the need for global error backpropagation.
 
-By combining **Spectral Normalization**, the **Muon** optimizer, and **Dion** low-rank updates, SDMEP solves the historic instability issues of Energy-Based Models (EBMs), enabling deep scaling on neuromorphic and analog hardware.
+This repository serves as a research platform for **Biologically Plausible Learning**, implementing continuous-time dynamics and local learning rules using PyTorch's autograd engine for efficient execution. By combining **Spectral Normalization**, the **Muon** optimizer, and **Dion** low-rank updates, SDMEP solves historic instability issues of Energy-Based Models (EBMs), enabling deep scaling experiments relevant to neuromorphic and analog hardware.
 
 ---
 
@@ -43,7 +45,7 @@ Use any standard PyTorch model (e.g., `nn.Sequential`, ResNet, Transformer).
 
 ```python
 import torch.nn as nn
-from mep.optim import SMEPOptimizer
+from mep.optimizers import SMEPOptimizer
 
 model = nn.Sequential(
     nn.Linear(784, 1000),
@@ -100,7 +102,7 @@ optimizer = SMEPOptimizer(
 Use `SDMEPOptimizer` for **Dion-Muon hybrid updates** (Low-Rank SVD for large layers, Newton-Schulz for small ones):
 
 ```python
-from mep.optim import SDMEPOptimizer
+from mep.optimizers import SDMEPOptimizer
 optimizer = SDMEPOptimizer(
     model.parameters(),
     rank_frac=0.2,   # Use top 20% singular values

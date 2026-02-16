@@ -1,6 +1,6 @@
 import torch
 import pytest
-from mep.optim import SMEPOptimizer, SDMEPOptimizer
+from mep.optimizers import SMEPOptimizer, SDMEPOptimizer
 
 def test_smep_step(device):
     """Test that SMEPOptimizer takes a step and updates parameters."""

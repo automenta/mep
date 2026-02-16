@@ -60,7 +60,7 @@ def test_numerical_gradients(device):
     model.double()
     
     # Init Optimizer with many steps for precision
-    from mep.optim import SMEPOptimizer
+    from mep.optimizers import SMEPOptimizer
     optimizer = SMEPOptimizer(
         model.parameters(), 
         lr=0.01, 

@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 import pytest
 import torch.nn as nn
-from mep.optim import SMEPOptimizer
+from mep.optimizers import SMEPOptimizer
 
 def test_xor_convergence(device):
     """Test that model converges to high accuracy on XOR."""

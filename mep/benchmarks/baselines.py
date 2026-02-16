@@ -1,6 +1,6 @@
 from typing import Tuple, Dict, Any, Optional
 import torch.optim as optim
-from mep.optim import SMEPOptimizer, SDMEPOptimizer
+from mep.optimizers import SMEPOptimizer, SDMEPOptimizer
 
 def get_optimizer(
     name: str, 

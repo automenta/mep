@@ -5,16 +5,16 @@ from torchvision import datasets, transforms
 import time
 import sys
 
-from mep.optimizers import SMEPOptimizer, LocalEPMuon, NaturalEPMuon
+from mep.optimizers import SMEPOptimizer, SDMEPOptimizer, LocalEPMuon, NaturalEPMuon
 
 # Configuration
 BATCH_SIZE = 64
-EPOCHS = 1
+EPOCHS = 5
 LR = 0.05
 BETA = 0.5
 SETTLE_STEPS = 15
 NS_STEPS = 5
-Subset_Size = 1000  # Train on a small subset for speed
+Subset_Size = 2000  # Train on a small subset for speed
 
 def get_dataloader():
     transform = transforms.Compose([
@@ -66,30 +66,31 @@ def train(optimizer_class, name, **kwargs):
     model.train()
     start_time = time.time()
 
-    total_loss = 0
-    correct = 0
-    total = 0
+    for epoch in range(EPOCHS):
+        total_loss = 0
+        correct = 0
+        total = 0
 
-    for batch_idx, (data, target) in enumerate(loader):
-        data, target = data.to(device), target.to(device)
+        for batch_idx, (data, target) in enumerate(loader):
+            data, target = data.to(device), target.to(device)
 
-        optimizer.zero_grad()
+            optimizer.zero_grad()
 
-        # EP Training Step
-        output = model(data)
-        optimizer.step(target=target)
+            # EP Training Step
+            output = model(data)
+            optimizer.step(target=target)
 
-        # Compute loss/acc for reporting (using the free phase output)
-        with torch.no_grad():
-             pred = output.argmax(dim=1, keepdim=True)
-             correct += pred.eq(target.view_as(pred)).sum().item()
-             total += target.size(0)
-             loss = F.cross_entropy(output, target)
-             total_loss += loss.item()
+            # Compute loss/acc for reporting (using the free phase output)
+            with torch.no_grad():
+                 pred = output.argmax(dim=1, keepdim=True)
+                 correct += pred.eq(target.view_as(pred)).sum().item()
+                 total += target.size(0)
+                 loss = F.cross_entropy(output, target)
+                 total_loss += loss.item()
 
-        if batch_idx % 5 == 0:
-            sys.stdout.write(f"\rBatch {batch_idx}/{len(loader)} Loss: {loss.item():.4f}")
-            sys.stdout.flush()
+            if batch_idx % 10 == 0:
+                sys.stdout.write(f"\rEpoch {epoch+1}/{EPOCHS} Batch {batch_idx}/{len(loader)} Loss: {loss.item():.4f}")
+                sys.stdout.flush()
 
     end_time = time.time()
     duration = end_time - start_time
@@ -106,11 +107,15 @@ if __name__ == "__main__":
     loss, acc, t = train(SMEPOptimizer, "SMEP (Standard EP)", mode='ep')
     results['SMEP'] = (loss, acc, t)
 
-    # 2. LocalEPMuon
+    # 2. SDMEP (Dion-Muon)
+    loss, acc, t = train(SDMEPOptimizer, "SDMEP (Dion-Muon)", mode='ep', dion_thresh=1000)
+    results['SDMEP'] = (loss, acc, t)
+
+    # 3. LocalEPMuon
     loss, acc, t = train(LocalEPMuon, "LocalEPMuon (Bio-Plausible)", mode='ep')
     results['LocalEPMuon'] = (loss, acc, t)
 
-    # 3. NaturalEPMuon
+    # 4. NaturalEPMuon
     loss, acc, t = train(NaturalEPMuon, "NaturalEPMuon (Fisher)", mode='ep', fisher_approx='empirical')
     results['NaturalEPMuon'] = (loss, acc, t)
 

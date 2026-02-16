@@ -206,6 +206,7 @@ def run_single_trial(
         'epoch_loss': [],
         'epoch_accuracy': [],
         'epoch_time': [],
+        'time_per_step': [],
         'test_accuracy': []
     }
 
@@ -215,8 +216,10 @@ def run_single_trial(
         model.train()
         tracker.start_epoch()
         epoch_start = time.time()
+        step_times = []
 
         for batch_idx, (data, target) in enumerate(train_loader):
+            step_start = time.time()
             data, target = data.to(device), target.to(device)
 
             if hasattr(data, 'view'):
@@ -232,6 +235,8 @@ def run_single_trial(
                 loss.backward()
                 optimizer.step()
 
+            step_times.append(time.time() - step_start)
+
             with torch.no_grad():
                 output = model(data)
                 loss = F.cross_entropy(output, target)
@@ -246,6 +251,7 @@ def run_single_trial(
         history['epoch_loss'].append(epoch_metrics['epoch_loss'])
         history['epoch_accuracy'].append(epoch_metrics['epoch_accuracy'])
         history['epoch_time'].append(time.time() - epoch_start)
+        history['time_per_step'].append(float(np.mean(step_times)))
 
         # Evaluate on test set
         test_acc = evaluate(model, test_loader, device)

@@ -10,6 +10,7 @@ baselines:
   - sdmep
   - local_ep
   - natural_ep
+  - eqprop
 learning_rate: 0.05
 momentum: 0.9
 weight_decay: 0.0005

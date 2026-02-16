@@ -132,13 +132,13 @@ class BenchmarkVisualizer:
                 # Loss curve (left)
                 if history['epoch_loss']:
                     axes[0].plot(epochs, history['epoch_loss'],
-                                 color=color, alpha=0.3, linewidth=1,
+                                 color=color, alpha=0.6, linewidth=2.5,
                                  label=opt_name.upper() if repeat_data['repeat'] == 1 else None)
 
                 # Accuracy curve (right)
                 if history['epoch_accuracy']:
                     axes[1].plot(epochs, history['epoch_accuracy'],
-                                 color=color, alpha=0.3, linewidth=1,
+                                 color=color, alpha=0.6, linewidth=2.5,
                                  label=opt_name.upper() if repeat_data['repeat'] == 1 else None)
 
         axes[0].set_xlabel('Epoch', fontsize=11, fontweight='bold')
@@ -208,41 +208,74 @@ class BenchmarkVisualizer:
         results: Dict[str, Any]
     ) -> None:
         """
-        Plot time per epoch analysis.
+        Plot time per epoch and time per step analysis.
         """
-        fig, ax = plt.subplots(figsize=(12, 6))
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
+        # 1. Time per Epoch
         optimizer_names = []
-        mean_times = []
-        std_times = []
+        epoch_means = []
+        epoch_stds = []
+        step_means = []
+        step_stds = []
 
         for opt_name, opt_data in results['optimizers'].items():
-            all_times = []
+            epoch_times = []
+            step_times = []
+
             for repeat_data in opt_data['repeats']:
                 history = repeat_data['history']
                 if history.get('epoch_time'):
-                    all_times.extend(history['epoch_time'])
-            if all_times:
+                    epoch_times.extend(history['epoch_time'])
+                if history.get('time_per_step'):
+                    # Flatten list of lists if needed, or handle list of step times
+                    # Assuming time_per_step is list of mean times per epoch or similar
+                    # Actually runner collects it per epoch? Let's check runner.
+                    # We will modify runner to store mean time_per_step per epoch.
+                    step_times.extend(history['time_per_step'])
+
+            if epoch_times:
                 optimizer_names.append(opt_name.upper())
-                mean_times.append(np.mean(all_times))
-                std_times.append(np.std(all_times))
+                epoch_means.append(np.mean(epoch_times))
+                epoch_stds.append(np.std(epoch_times))
+
+                if step_times:
+                    step_means.append(np.mean(step_times) * 1000) # Convert to ms
+                    step_stds.append(np.std(step_times) * 1000)
+                else:
+                    step_means.append(0)
+                    step_stds.append(0)
 
         if optimizer_names:
             x_pos = np.arange(len(optimizer_names))
-            bars = ax.bar(x_pos, mean_times, yerr=std_times, capsize=5,
+
+            # Epoch Time Plot
+            bars1 = axes[0].bar(x_pos, epoch_means, yerr=epoch_stds, capsize=5,
                           color='#5C946E', alpha=0.8, edgecolor='black')
+            axes[0].set_xlabel('Optimizer', fontsize=12, fontweight='bold')
+            axes[0].set_ylabel('Time per Epoch (s)', fontsize=12, fontweight='bold')
+            axes[0].set_title('Training Time per Epoch', fontsize=14, fontweight='bold')
+            axes[0].set_xticks(x_pos)
+            axes[0].set_xticklabels(optimizer_names, rotation=25, ha='right')
 
-            ax.set_xlabel('Optimizer', fontsize=12, fontweight='bold')
-            ax.set_ylabel('Time per Epoch (seconds)', fontsize=12, fontweight='bold')
-            ax.set_title('Training Time Analysis', fontsize=14, fontweight='bold')
-            ax.set_xticks(x_pos)
-            ax.set_xticklabels(optimizer_names, rotation=15, ha='right')
-
-            # Add value labels
-            for bar, mean, std in zip(bars, mean_times, std_times):
+            for bar, mean, std in zip(bars1, epoch_means, epoch_stds):
                 height = bar.get_height()
-                ax.text(bar.get_x() + bar.get_width() / 2., height + std + 0.1,
+                axes[0].text(bar.get_x() + bar.get_width() / 2., height + std + 0.05,
                         f'{mean:.2f}s', ha='center', va='bottom', fontsize=9)
+
+            # Step Time Plot
+            bars2 = axes[1].bar(x_pos, step_means, yerr=step_stds, capsize=5,
+                          color='#A23B72', alpha=0.8, edgecolor='black')
+            axes[1].set_xlabel('Optimizer', fontsize=12, fontweight='bold')
+            axes[1].set_ylabel('Time per Step (ms)', fontsize=12, fontweight='bold')
+            axes[1].set_title('Computational Cost per Step', fontsize=14, fontweight='bold')
+            axes[1].set_xticks(x_pos)
+            axes[1].set_xticklabels(optimizer_names, rotation=25, ha='right')
+
+            for bar, mean, std in zip(bars2, step_means, step_stds):
+                height = bar.get_height()
+                axes[1].text(bar.get_x() + bar.get_width() / 2., height + std + 0.1,
+                        f'{mean:.1f}ms', ha='center', va='bottom', fontsize=9)
 
             plt.tight_layout()
             plt.savefig(os.path.join(self.output_dir, 'time_analysis.png'),

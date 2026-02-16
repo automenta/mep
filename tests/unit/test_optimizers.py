@@ -1,6 +1,16 @@
 import torch
+import torch.nn as nn
 import pytest
-from mep.optimizers import SMEPOptimizer, SDMEPOptimizer
+from mep.optimizers import SMEPOptimizer, SDMEPOptimizer, LocalEPMuon, NaturalEPMuon
+
+@pytest.fixture
+def simple_model(device):
+    model = nn.Sequential(
+        nn.Linear(10, 5),
+        nn.ReLU(),
+        nn.Linear(5, 2)
+    ).to(device)
+    return model
 
 def test_smep_step(device):
     """Test that SMEPOptimizer takes a step and updates parameters."""
@@ -66,3 +76,67 @@ def test_sdmep_spectral_constraint(device):
     # Should be <= gamma (approx)
     # The constraint: if sigma > gamma: p.mul(gamma/sigma) -> new sigma = gamma
     assert spectral_norm <= 0.96 # Allow small tolerance
+
+def test_smep_spectral_timing(device, simple_model):
+    """Test that SMEPOptimizer runs with spectral_timing='during_settling'."""
+    optimizer = SMEPOptimizer(
+        simple_model.parameters(),
+        model=simple_model,
+        mode='ep',
+        spectral_timing='during_settling',
+        spectral_lambda=0.1,
+        use_spectral_constraint=True,
+        gamma=0.95
+    )
+
+    x = torch.randn(4, 10, device=device)
+    y = torch.randint(0, 2, (4,), device=device)
+
+    # Run step
+    optimizer.step(x=x, target=y)
+
+    # Check that it ran (no crash)
+
+def test_local_ep_muon_step(device, simple_model):
+    """Test LocalEPMuon updates parameters using local gradients."""
+    optimizer = LocalEPMuon(
+        simple_model.parameters(),
+        model=simple_model,
+        mode='ep',
+        beta=0.1
+    )
+
+    x = torch.randn(4, 10, device=device)
+    y = torch.randint(0, 2, (4,), device=device)
+
+    w_before = [p.clone() for p in simple_model.parameters()]
+
+    optimizer.step(x=x, target=y)
+
+    # Check if weights changed
+    for p, p_old in zip(simple_model.parameters(), w_before):
+        if p.requires_grad:
+            assert not torch.allclose(p, p_old), f"Parameter {p.shape} did not update"
+            assert p.grad is not None, "Gradient should be populated"
+
+def test_natural_ep_muon_step(device, simple_model):
+    """Test NaturalEPMuon updates parameters using Fisher approximation."""
+    optimizer = NaturalEPMuon(
+        simple_model.parameters(),
+        model=simple_model,
+        mode='ep',
+        beta=0.1,
+        fisher_approx='empirical'
+    )
+
+    x = torch.randn(4, 10, device=device)
+    y = torch.randint(0, 2, (4,), device=device)
+
+    w_before = [p.clone() for p in simple_model.parameters()]
+
+    optimizer.step(x=x, target=y)
+
+    # Check update
+    for p, p_old in zip(simple_model.parameters(), w_before):
+        if p.requires_grad:
+            assert not torch.allclose(p, p_old), f"Parameter {p.shape} did not update"

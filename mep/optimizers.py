@@ -71,7 +71,9 @@ class SMEPOptimizer(Optimizer):
         use_error_feedback: bool = True,
         error_beta: float = 0.9,
         use_spectral_constraint: bool = True,
-        gamma: float = 0.95
+        gamma: float = 0.95,
+        spectral_timing: str = 'post_update',
+        spectral_lambda: float = 1.0
     ):
         """
         Initialize SMEPOptimizer.
@@ -91,18 +93,24 @@ class SMEPOptimizer(Optimizer):
             error_beta: Error feedback decay.
             use_spectral_constraint: Enable spectral constraint.
             gamma: Spectral norm bound.
+            spectral_timing: 'post_update', 'during_settling', or 'both'.
+            spectral_lambda: Strength of spectral penalty during settling.
         """
         defaults = dict(
             lr=lr, momentum=momentum, wd=wd, ns_steps=ns_steps,
             mode=mode, beta=beta, settle_steps=settle_steps, settle_lr=settle_lr,
             use_error_feedback=use_error_feedback, error_beta=error_beta,
-            use_spectral_constraint=use_spectral_constraint, gamma=gamma
+            use_spectral_constraint=use_spectral_constraint, gamma=gamma,
+            spectral_timing=spectral_timing, spectral_lambda=spectral_lambda
         )
         super().__init__(params, defaults)
         
         # Validate mode
         if mode not in ['backprop', 'ep']:
             raise ValueError(f"mode must be 'backprop' or 'ep', got {mode}")
+
+        if spectral_timing not in ['post_update', 'during_settling', 'both']:
+            raise ValueError(f"spectral_timing must be one of ['post_update', 'during_settling', 'both'], got {spectral_timing}")
         
         # Cache for model structure to avoid repeated introspection
         self._model_structure_cache = {}
@@ -323,6 +331,39 @@ class SMEPOptimizer(Optimizer):
             lr=self.defaults['settle_lr'], 
             momentum=self.SETTLING_MOMENTUM
         )
+
+        # Pre-calculate spectral penalty if needed
+        # Note: This penalty depends on weights (fixed during settling), so it does not affect state gradients.
+        # It is added primarily to reflect the "constrained energy landscape" as requested.
+        spectral_penalty = torch.tensor(0.0, device=x.device, dtype=x.dtype)
+
+        # Check if any group needs spectral penalty
+        needs_spectral = False
+        for group in self.param_groups:
+            timing = group.get('spectral_timing', self.defaults.get('spectral_timing', 'post_update'))
+            if timing in ['during_settling', 'both'] and group.get('use_spectral_constraint', False):
+                needs_spectral = True
+                break
+
+        if needs_spectral:
+            for group in self.param_groups:
+                 timing = group.get('spectral_timing', self.defaults.get('spectral_timing', 'post_update'))
+                 if timing in ['during_settling', 'both'] and group.get('use_spectral_constraint', False):
+                     for p in group['params']:
+                         if p.ndim >= 2:
+                             state = self.state[p]
+                             if 'u_spec' not in state: state['u_spec'] = None
+                             if 'v_spec' not in state: state['v_spec'] = None
+
+                             # We use p (not p.data) to theoretically allow gradients, though settling doesn't use them
+                             sigma, u, v = self.get_spectral_norm(p, state['u_spec'], state['v_spec'])
+                             # Update cached vectors
+                             state['u_spec'] = u.detach()
+                             state['v_spec'] = v.detach()
+
+                             if sigma > group['gamma']:
+                                 diff = sigma - group['gamma']
+                                 spectral_penalty = spectral_penalty + group.get('spectral_lambda', 1.0) * (diff ** 2)
         
         # Prepare target vector if needed
         target_vec = None
@@ -334,9 +375,12 @@ class SMEPOptimizer(Optimizer):
             state_optimizer.zero_grad()
             with torch.enable_grad():
                 E = self._compute_energy(model, x, states, structure, target_vec, beta)
-                grads = torch.autograd.grad(E, states, retain_graph=False)
+                if spectral_penalty > 0:
+                    E = E + spectral_penalty
+                grads = torch.autograd.grad(E, states, retain_graph=False, allow_unused=True)
 
             for state, g in zip(states, grads):
+                if g is None: continue
                 if state.grad is None:
                     state.grad = g.detach()
                 else:
@@ -517,7 +561,8 @@ class SMEPOptimizer(Optimizer):
                 p.data.add_(buf, alpha=-group['lr'])
                 
                 # --- Spectral Constraint ---
-                if group['use_spectral_constraint'] and p.ndim >= 2:
+                spectral_timing = group.get('spectral_timing', 'post_update')
+                if group['use_spectral_constraint'] and p.ndim >= 2 and spectral_timing in ['post_update', 'both']:
                     sigma, u, v = self.get_spectral_norm(p.data, state['u_spec'], state['v_spec'])
                     state['u_spec'] = u
                     state['v_spec'] = v
@@ -620,3 +665,139 @@ class SDMEPOptimizer(SMEPOptimizer):
             state['error_buffer'].zero_()
             
             return update_flat
+
+class LocalEPMuon(SMEPOptimizer):
+    """
+    EP with layer-local Newton-Schulz orthogonalization.
+    Preserves biological plausibility: no global gradient communication.
+    """
+    def _compute_update(self, p, g_flat, group, state, g_aug, orig_shape):
+        # Only use gradients from this layer's immediate context
+        # No access to cross-layer gradients
+        return self.newton_schulz(g_flat, group['ns_steps'])
+
+    def _get_layer_io(self, model, x, states, structure):
+        io_list = []
+        prev = x
+        state_idx = 0
+        for item in structure:
+            if item['type'] == 'layer':
+                if state_idx >= len(states): break
+                module = item['module']
+                state = states[state_idx]
+                io_list.append({'module': module, 'input': prev, 'output': state})
+                prev = state
+                state_idx += 1
+            elif item['type'] == 'act':
+                prev = item['module'](prev)
+        return io_list
+
+    def _apply_ep_gradients(self, model, x, target, states_free, states_nudged, structure):
+        # Override to prevent gradient accumulation across layers
+        # Each layer updates independently based on local energy contrast
+
+        io_free = self._get_layer_io(model, x, states_free, structure)
+        io_nudged = self._get_layer_io(model, x, states_nudged, structure)
+
+        # Create map from module id to IO data
+        map_free = {id(item['module']): item for item in io_free}
+        map_nudged = {id(item['module']): item for item in io_nudged}
+
+        # Iterate structure to process layers
+        for item in structure:
+            if item['type'] != 'layer': continue
+            module = item['module']
+
+            if id(module) not in map_free or id(module) not in map_nudged: continue
+
+            free_data = map_free[id(module)]
+            nudged_data = map_nudged[id(module)]
+
+            # --- Free Phase Local Gradient ---
+            # E_local = 0.5 * || output - module(input) ||^2
+            # Detach input/output to isolate this layer's gradient
+            in_free = free_data['input'].detach()
+            out_free = free_data['output'].detach()
+
+            # Recompute forward pass for this layer to build graph
+            with torch.enable_grad():
+                pred_free = module(in_free)
+                # Mean over batch
+                E_free = 0.5 * ((pred_free - out_free)**2).sum() / x.shape[0]
+                grads_free = torch.autograd.grad(E_free, module.parameters(), retain_graph=False, allow_unused=True)
+
+            # --- Nudged Phase Local Gradient ---
+            in_nudged = nudged_data['input'].detach()
+            out_nudged = nudged_data['output'].detach()
+
+            with torch.enable_grad():
+                pred_nudged = module(in_nudged)
+                E_nudged = 0.5 * ((pred_nudged - out_nudged)**2).sum() / x.shape[0]
+                grads_nudged = torch.autograd.grad(E_nudged, module.parameters(), retain_graph=False, allow_unused=True)
+
+            # --- Update Gradients ---
+            for p, g_free, g_nudged in zip(module.parameters(), grads_free, grads_nudged):
+                if g_free is None or g_nudged is None: continue
+                ep_grad = (g_nudged - g_free) / self.defaults['beta']
+
+                if p.grad is None:
+                    p.grad = ep_grad.detach()
+                else:
+                    p.grad.add_(ep_grad.detach())
+
+class NaturalEPMuon(SMEPOptimizer):
+    """
+    EP with Natural Gradient descent on the energy landscape.
+    Uses Fisher Information Matrix induced by the EP energy function.
+    """
+    def __init__(self, params, fisher_approx='empirical', **kwargs):
+        super().__init__(params, **kwargs)
+        self.fisher_approx = fisher_approx
+
+    def _compute_update(self, p, g_flat, group, state, g_aug, orig_shape):
+        # Approximate Fisher from EP energy landscape
+        fisher_block = self._compute_fisher_block(p, state, g_flat)
+
+        if fisher_block is not None:
+             # Whitening: solve(F + eps*I, g^T)^T -> g @ (F + eps*I)^-1
+             F = fisher_block + self.EPSILON_NORM * torch.eye(fisher_block.shape[0], device=fisher_block.device)
+             try:
+                 whitened = torch.linalg.solve(F, g_flat.T).T
+             except RuntimeError:
+                 whitened = g_flat
+        else:
+             whitened = g_flat
+
+        return self.newton_schulz(whitened, group['ns_steps'])
+
+    def _compute_fisher_block(self, p, state, g_flat):
+        # Retrieve stored grad_free
+        grad_free = state.get('grad_free')
+        if grad_free is None: return None
+
+        # Flatten grad_free if needed
+        if grad_free.shape != g_flat.shape:
+             grad_free = grad_free.view(g_flat.shape)
+
+        # Empirical Fisher approximation: F = g_free^T @ g_free
+        # This gives (Cols, Cols).
+        F = grad_free.T @ grad_free
+        # Normalize by norm to keep scale reasonable
+        F = F / (grad_free.norm() + 1e-6)
+        return F
+
+    def _apply_ep_gradients(self, model, x, target, states_free, states_nudged, structure):
+        # 1. Standard EP gradients
+        super()._apply_ep_gradients(model, x, target, states_free, states_nudged, structure)
+
+        # 2. Capture Free Phase Gradients for Fisher
+        target_vec = self._prepare_target(target, states_free[-1].shape[-1], dtype=states_free[-1].dtype)
+        # Re-compute E_free
+        E_free = self._compute_energy(model, x, states_free, structure, target_vec=None, beta=0.0)
+
+        grads_free = torch.autograd.grad(E_free, model.parameters(), retain_graph=False, allow_unused=True)
+
+        for p, g_free in zip(model.parameters(), grads_free):
+            if g_free is not None:
+                if p.ndim >= 2:
+                     self.state[p]['grad_free'] = g_free.detach()

@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 import pytest
 import torch.nn as nn
-from mep.optim import SDMEPOptimizer
+from mep.optimizers import SDMEPOptimizer
 
 @pytest.mark.slow
 def test_mnist_accuracy_regression(device):

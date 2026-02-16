@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 import pytest
 import torch.nn as nn
-from mep.optim import SMEPOptimizer
+from mep.optimizers import SMEPOptimizer
 
 def test_training_loop_xor(device):
     """Test that a model can be trained on XOR using SDMEP."""

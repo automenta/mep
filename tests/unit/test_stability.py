@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import pytest
-from mep.optim import SMEPOptimizer, SDMEPOptimizer
+from mep.optimizers import SMEPOptimizer, SDMEPOptimizer
 
 def test_batch_size_energy_consistency(device):
     """Test that energy-per-sample is consistent across batch sizes.
@@ -37,7 +37,7 @@ def test_batch_size_energy_consistency(device):
         
         # Compute energy
         structure = optimizer._inspect_model(model)
-        target_vec = optimizer._prepare_target(target, states[-1].shape[-1])
+        target_vec = optimizer._prepare_target(target, states[-1].shape[-1], dtype=states[-1].dtype)
         energy = optimizer._compute_energy(model, x, states, structure, target_vec, beta=0.5)
         
         # Energy should be per-sample (normalized by batch_size internally)
@@ -70,7 +70,7 @@ def test_settling_convergence(device):
         
         # Compute energy of settled states
         structure = optimizer._inspect_model(model)
-        target_vec = optimizer._prepare_target(target, states[-1].shape[-1])
+        target_vec = optimizer._prepare_target(target, states[-1].shape[-1], dtype=states[-1].dtype)
         energy = optimizer._compute_energy(model, x, states, structure, target_vec, beta=0.5)
         energies.append(energy.item())
     

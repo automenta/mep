@@ -2,7 +2,7 @@
 import torch
 import torch.nn as nn
 import pytest
-from mep.optim import SMEPOptimizer
+from mep.optimizers import SMEPOptimizer
 
 def test_settle_energy_reduction(device):
     """Test that settling reduces energy compared to initial state."""

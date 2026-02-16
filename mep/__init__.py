@@ -1,4 +1,4 @@
-from .optim import SMEPOptimizer, SDMEPOptimizer
+from .optimizers import SMEPOptimizer, SDMEPOptimizer
 
 __version__ = "0.2.0"
 __all__ = [

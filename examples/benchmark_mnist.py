@@ -11,13 +11,12 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from torchvision import datasets, transforms
-from mep.optim import MuonOptimizer, SDMEPOptimizer
-from mep.models import EPNetwork, EPMLP
+from mep.optimizers import SMEPOptimizer, SDMEPOptimizer
 
 def get_args():
     parser = argparse.ArgumentParser(description='SDMEP Benchmark')
     parser.add_argument('--dataset', type=str, default='MNIST', choices=['MNIST', 'FashionMNIST'], help='Dataset to use')
-    parser.add_argument('--model', type=str, default='MLP', choices=['MLP', 'CNN'], help='Model architecture')
+    parser.add_argument('--model', type=str, default='MLP', choices=['MLP'], help='Model architecture')
     parser.add_argument('--optimizer', type=str, default='SDMEP', choices=['Backprop', 'SMEP', 'SDMEP', 'AdamW'], help='Optimizer')
     parser.add_argument('--epochs', type=int, default=5, help='Number of epochs')
     parser.add_argument('--batch-size', type=int, default=128, help='Batch size')
@@ -27,44 +26,31 @@ def get_args():
     parser.add_argument('--results-file', type=str, default='results.json', help='Results file')
     return parser.parse_args()
 
-class Flatten(nn.Module):
-    def forward(self, x):
-        return x.view(x.size(0), -1)
-
 def build_model(model_type, device):
     if model_type == "MLP":
         # 784 -> 1000 -> 10
-        model = EPMLP([784, 1000, 10]).to(device)
-    elif model_type == "CNN":
-        # Simple CNN: Conv(1->16, 3x3) -> Conv(16->32, 3x3) -> Flatten -> Linear(32*24*24->10)
-        layers = [
-            nn.Conv2d(1, 16, 3, padding=0, bias=False), # 28->26
-            nn.Conv2d(16, 32, 3, padding=0, bias=False), # 26->24
-            Flatten(),
-            nn.Linear(32*24*24, 10, bias=False)
-        ]
-        # Init weights orthogonally for stability
-        for l in layers:
-            if isinstance(l, (nn.Conv2d, nn.Linear)):
-                nn.init.orthogonal_(l.weight)
-                if l.bias is not None: nn.init.zeros_(l.bias)
-
-        model = EPNetwork(layers).to(device)
+        model = nn.Sequential(
+            nn.Linear(784, 1000),
+            nn.ReLU(),
+            nn.Linear(1000, 10)
+        ).to(device)
+    else:
+        raise ValueError(f"Unknown model: {model_type}")
     return model
 
 def get_optimizer(args, model):
     if args.optimizer == "Backprop":
-        # SGD as in original baseline
+        # SGD
         return torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9)
     elif args.optimizer == "AdamW":
         return torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
     elif args.optimizer == "SMEP":
-        return MuonOptimizer(model.parameters(), lr=args.lr, ns_steps=4)
+        # SMEP in EP mode
+        return SMEPOptimizer(model.parameters(), lr=args.lr, mode='ep', ns_steps=4)
     elif args.optimizer == "SDMEP":
-        # Hybrid Dion-Muon + Spectral + Error Feedback
-        # dion_thresh=500000 ensures large linear layers use Dion
+        # SDMEP in EP mode
         return SDMEPOptimizer(model.parameters(), lr=args.lr, gamma=0.95,
-                                   rank_frac=0.1, error_beta=0.9, dion_thresh=500000)
+                                   rank_frac=0.1, error_beta=0.9, dion_thresh=500000, mode='ep')
     else:
         raise ValueError(f"Unknown optimizer: {args.optimizer}")
 
@@ -82,12 +68,7 @@ def train(args):
         train_set = datasets.FashionMNIST(args.data_dir, train=True, download=True, transform=transform)
         test_set = datasets.FashionMNIST(args.data_dir, train=False, download=True, transform=transform)
 
-    # Subset for speed if needed, but for benchmark maybe full dataset?
-    # Original used 4000 subset. I'll stick to full dataset for rigor, unless it's too slow.
-    # Given the environment, maybe subset is safer for now. I'll use 4000 as default behavior for "fast" benchmark
-    # but let's try full dataset first. If it times out, I will switch.
-    # Actually, for "rigorous evaluation", full dataset is better.
-    # But for this constrained environment, I will use a larger subset than 4000, maybe 10000.
+    # Subset for speed
     train_subset_indices = torch.randperm(len(train_set))[:10000]
     train_set = torch.utils.data.Subset(train_set, train_subset_indices)
 
@@ -124,8 +105,6 @@ def train(args):
             if args.model == "MLP":
                 x = x.view(x.shape[0], -1)
 
-            y_oh = F.one_hot(y, 10).float()
-
             optimizer.zero_grad()
 
             if args.optimizer in ["Backprop", "AdamW"]:
@@ -140,20 +119,16 @@ def train(args):
 
             else:
                 # EP Modes
-                conf = None
-                if args.optimizer == "SDMEP":
-                    conf = {'sparsity': 0.2} # 20% sparsity
+                # Note: SMEP/SDMEP step handles EP gradient computation internally
+                optimizer.step(x=x, target=y, model=model)
 
-                # Tune Beta for CNN to avoid explosion
-                beta_val = 0.1 if args.model == "CNN" else 0.5
-                model.compute_ep_gradients(x, y_oh, beta=beta_val, sdmp_config=conf)
-                optimizer.step()
-
-                # Inference for stats
+                # Inference for stats (extra forward pass)
                 with torch.no_grad():
                     pred = model(x)
                     correct += (pred.argmax(1) == y).sum().item()
-                    ep_loss += F.mse_loss(pred, y_oh).item() # MSE for EP
+                    # Calculate MSE loss for EP monitoring
+                    y_oh = F.one_hot(y, 10).float()
+                    ep_loss += F.mse_loss(pred, y_oh).item()
                     total += y.size(0)
 
         train_acc = 100 * correct / total
@@ -182,8 +157,9 @@ def train(args):
         test_acc = 100 * test_correct / test_total
         test_loss = test_loss / len(test_loader)
 
-        # Spectral Norm Check
-        l0_w = model.layers[0].weight
+        # Spectral Norm Check (Layer 0)
+        # model is nn.Sequential. Layer 0 is Linear.
+        l0_w = model[0].weight
         if l0_w.ndim > 2:
              w_mat = l0_w.view(l0_w.shape[0], -1)
         else:
@@ -218,12 +194,6 @@ def train(args):
         "metrics": metrics,
         "total_time": total_time
     }
-
-    # Append to existing file or create new
-    # Actually, better to just append a line if we want to run multiple experiments
-    # Or write separate files?
-    # Let's write separate files based on config signature to avoid overwriting or messy appends
-    # Or just use the filename provided
 
     try:
         with open(args.results_file, 'r') as f:

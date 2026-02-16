@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Optimizer
-from typing import Optional, Tuple, Dict, Any, Union, List, Iterable
+from typing import Optional, Tuple, List, Iterable
 
 class SMEPOptimizer(Optimizer):
     """
@@ -80,7 +80,7 @@ class SMEPOptimizer(Optimizer):
         X.div_(norm)
 
         # NS Iteration: X = 0.5 * X * (3I - X^T X)
-        I = torch.eye(c, device=G.device)
+        I = torch.eye(c, device=G.device, dtype=G.dtype)
         for _ in range(steps):
             A = X.T @ X
             X = 0.5 * X @ (3 * I - A)
@@ -119,10 +119,10 @@ class SMEPOptimizer(Optimizer):
         
         h, w = W.shape
         if u is None:
-            u = torch.randn(h, device=W.device)
+            u = torch.randn(h, device=W.device, dtype=W.dtype)
             u /= u.norm()
         if v is None:
-            v = torch.randn(w, device=W.device)
+            v = torch.randn(w, device=W.device, dtype=W.dtype)
             v /= v.norm()
         
         for _ in range(iter):
@@ -432,6 +432,7 @@ class SDMEPOptimizer(SMEPOptimizer):
         beta: float = 0.5,
         settle_steps: int = 20,
         settle_lr: float = 0.05,
+        ns_steps: int = 5,
         use_error_feedback: bool = True,
         use_spectral_constraint: bool = True
     ):
@@ -445,7 +446,7 @@ class SDMEPOptimizer(SMEPOptimizer):
             beta=beta,
             settle_steps=settle_steps,
             settle_lr=settle_lr,
-            ns_steps=5,
+            ns_steps=ns_steps,
             use_error_feedback=use_error_feedback,
             error_beta=error_beta,
             use_spectral_constraint=use_spectral_constraint,

@@ -9,3 +9,11 @@ env/
 venv/
 data/
 results.json
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+experiments/
+wandb/

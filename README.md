@@ -1,101 +1,154 @@
 # MEP: Muon Equilibrium Propagation
 ### 🧠 Biologically Plausible, Infinite-Depth Learning
 
+![MEP Architecture](https://raw.githubusercontent.com/your-username/mep/main/docs/assets/mep_banner.png)
+
 **SDMEP** is an optimization framework that merges **Equilibrium Propagation (EP)** with spectral control and geometry-aware updates. It is designed to train deep neural networks **without Backpropagation**, using local learning rules that are biologically plausible, hardware-friendly, and mathematically robust.
 
 By combining **Spectral Normalization**, the **Muon** optimizer, and **Dion** low-rank updates, SDMEP solves the historic instability issues of Energy-Based Models (EBMs), enabling deep scaling on neuromorphic and analog hardware.
 
 ---
 
-## 🌟 Why SDMEP?
+## 🌟 Key Features
 
-The standard Backpropagation algorithm has powered the AI revolution, but it hits a wall: **The von Neumann Bottleneck**. It requires storing activations for every layer in memory, transporting weights globally, and performing precise floating-point arithmetic.
-
-SDMEP offers a radical alternative:
-1.  **O(1) Memory Cost:** Memory usage does not grow with network depth. You can train a 1,000-layer network with the memory of a single layer.
-2.  **Biological Plausibility:** Updates are local (Hebbian). Neurons only need to know what their neighbors are doing.
-3.  **Unbreakable Stability:** Unlike traditional EP, which explodes in deep networks, SDMEP enforces a strict **Spectral Constraint ($L < 1$)**, guaranteeing convergence.
-4.  **Hardware Native:** Designed for the future of computing—optical chips, analog arrays, and FPGA clusters where global memory is scarce.
+1.  **O(1) Memory Cost:** Memory usage does not grow with network depth. Train 1,000-layer networks with the memory of a single layer.
+2.  **Biological Plausibility:** Local (Hebbian) updates. Neurons only need information from their neighbors.
+3.  **Unbreakable Stability:** Unlike traditional EP, SDMEP enforces a strict **Spectral Constraint ($\sigma(W) \le \gamma < 1$)**, guaranteeing convergence to a unique fixed point.
+4.  **Hardware Native:** Ready for optical chips, analog arrays, and FPGA clusters.
 
 ---
 
-## 🔧 The Core Trinity
+## 🔧 Installation
 
-SDMEP is named after its three stabilizing pillars. Together, they create a "Safety Harness" for deep learning.
+Install MEP via pip:
 
-### 1. **S**pectral Normalization (The Brakes)
-Deep equilibrium networks are prone to chaos. If the Lipschitz constant of the weights ($L$) exceeds 1, signals explode.
-*   **Mechanism:** SDMEP estimates the spectral radius $\sigma(W)$ via amortized power iteration.
-*   **Guarantee:** It rigidly enforces $\sigma(W) \le \gamma$ (e.g., 0.95), ensuring the network acts as a **Contraction Mapping**. This guarantees a unique fixed point exists.
+```bash
+pip install mep
+```
 
-### 2. **D**ion Updates (The Scaler)
-For massive layers (e.g., 4096+ widths in LLMs), standard orthogonalization is too expensive ($O(N^3)$).
-*   **Mechanism:** Dion projects gradients into a persistent low-rank subspace ($O(N \cdot r)$).
-*   **Benefit:** It allows us to maintain geometric stability on massive parameter sets without blowing up compute budgets.
+Or install from source for development:
 
-### 3. **M**uon Optimization (The Engine)
-Standard SGD allows weights to collapse into singular dimensions.
-*   **Mechanism:** Muon uses **Newton-Schulz iterations** to orthogonalize update steps.
-*   **Benefit:** It forces the network to learn diverse features, accelerating convergence even when gradients are noisy or approximate (as they are in EP).
+```bash
+git clone https://github.com/your-username/mep.git
+cd mep
+pip install .
+```
 
 ---
 
-## 🚀 The Algorithm
+## 🚀 Quick Start
 
-SDMEP fundamentally changes the training loop. Instead of `Forward -> Backward -> Update`, we have **`Settle -> Nudge -> Contrast`**.
+### 1. Define Model
+Use any standard PyTorch model (e.g., `nn.Sequential`, ResNet, Transformer).
 
-### The SDMEP Cycle
-1.  **Free Phase (Settle):** The network relaxes to an energy minimum given the input $x$.
-    *   *Features:* Uses momentum-augmented dynamics and **sparsity** (top-k activation) to save energy.
-2.  **Nudged Phase (Nudge):** The output neurons are slightly pushed toward the target $y$. The energy landscape tilts.
-3.  **Update (Contrast):** The weights are updated based on the difference between the "Free" and "Nudged" states.
-    *   $\Delta W \propto (s_{nudged} \cdot s_{prev\_nudged}^T) - (s_{free} \cdot s_{prev\_free}^T)$
-4.  **Optimizer Step:**
-    *   **Error Feedback:** Adds back "lost" residuals from previous approximations (Continual Learning).
-    *   **Ortho-Step:** Applies Muon (small layers) or Dion (large layers).
-    *   **Clamp:** Rescales weights to satisfy the Spectral Constraint.
+```python
+import torch.nn as nn
+from mep.optim import SMEPOptimizer
+
+model = nn.Sequential(
+    nn.Linear(784, 1000),
+    nn.ReLU(),
+    nn.Linear(1000, 10)
+)
+```
+
+### 2. Choose an Optimizer Mode
+
+**Option 1: Standard Backprop (Muon updates only)**
+```python
+optimizer = SMEPOptimizer(model.parameters(), lr=0.01, mode='backprop')
+
+# Standard training loop
+x, y = next(dataloader)
+optimizer.zero_grad()
+output = model(x)
+loss = criterion(output, y)
+loss.backward()
+optimizer.step()  #  Applies Muon (Newton-Schulz) updates
+```
+
+**Option 2: Equilibrium Propagation (Biology-inspired gradients)**
+```python
+optimizer = SMEPOptimizer(
+    model.parameters(), 
+    lr=0.01, 
+    mode='ep',        # Enable EP gradient computation
+    beta=0.5,        # Nudge strength
+    settle_steps=20  # Settling iterations
+)
+
+# EP workflow - no .backward() needed!
+x, y = next(dataloader)
+optimizer.zero_grad()
+optimizer.step(x=x, target=y, model=model)  # Computes EP gradients internally
+```
+
+### Advanced Features (SMEP & SDMEP)
+
+Enable **Spectral Constraints** (Lipschitz control) and **Error Feedback** (for continual learning) directly in `SMEPOptimizer`:
+
+```python
+optimizer = SMEPOptimizer(
+    model.parameters(),
+    lr=0.02,
+    use_spectral_constraint=True,  # Constrain spectral norm < gamma
+    gamma=0.95,
+    use_error_feedback=True        # Accumulate update residuals
+)
+```
+
+Use `SDMEPOptimizer` for **Dion-Muon hybrid updates** (Low-Rank SVD for large layers, Newton-Schulz for small ones):
+
+```python
+from mep.optim import SDMEPOptimizer
+optimizer = SDMEPOptimizer(
+    model.parameters(),
+    rank_frac=0.2,   # Use top 20% singular values
+    dion_thresh=1e5  # Use Dion if params > 100k
+)
+```
 
 ---
 
-## 💻 Usage
+## 📊 Benchmarks
 
-SDMEP is implemented as a drop-in PyTorch Optimizer.
+Compare SMEP (mode='ep') against standard optimizers on MNIST:
 
----
+```bash
+python -m mep.benchmarks.runner \
+  --config mep/benchmarks/config/mnist.yaml \
+  --baselines smep sdmep sgd \
+  --output benchmarks/results/mnist_comparison
+```
 
-## 📊 Benchmarks & Honest Performance
-
-SDMEP is an experimental algorithm. Here is the honest breakdown of how it compares to standard Backpropagation (BP).
-
-### The "Torture Test" (MNIST Subset, High Learning Rate)
-*Standard BP often collapses under high learning rates without BatchNorm. SDMEP thrives.*
-
-| Method | Accuracy (3 Epochs) | Spectral Norm ($\sigma$) | Stability |
-| :--- | :--- | :--- | :--- |
-| **Backprop (SGD)** | 20.1% (Collapsed) | 22.68 (Exploded) | ❌ Failed |
-| **SMEP (Muon only)** | 69.2% | 1.70 (Drifting) | ⚠️ Risk of Divergence |
-| **SDMEP (Full)** | **66.8%** | **0.95 (Fixed)** | ✅ **Guaranteed** |
-
-### Trade-offs
-*   **Speed:** In Python, SDMEP is **3-5x slower** than BP. This is because BP uses highly optimized CUDA kernels (`cuDNN`), while SDMEP currently relies on Python loops for the "Settling" phase.
-    *   *Optimistic Note:* On neuromorphic hardware or custom FPGA implementations, SDMEP is theoretically faster and orders of magnitude more energy-efficient.
-*   **Precision:** SDMEP uses approximate gradients. It may not reach the absolute SOTA accuracy of AdamW on Transformers yet, but it provides a path to training models that AdamW simply cannot (e.g., infinite depth).
+Results (plots and logs) will be saved to `benchmarks/results/`. Performance reports are in `PERFORMANCE.md`.
 
 ---
 
 ## 🔮 Roadmap
 
-*   [x] **Proof of Concept:** Working implementation on MNIST.
-*   [ ] **Dion CUDA Kernel:** Custom C++ extension to accelerate the low-rank updates.
-*   [ ] **Convolutional Layers:** Extending `EPLayer` to support CNN architectures.
-*   [ ] **LLM Scaling:** Testing SDMEP on 100M+ parameter language models.
-*   [ ] **Neuromorphic Port:** Implementation on Spiking Neural Network (SNN) simulators.
+*   [x] **Foundation:** `pyproject.toml`, packaging, CI/CD setup.
+*   [x] **Testing:** >85% coverage, numerical gradient verification.
+*   [x] **Benchmarks:** Framework for comparing Optimizers/Models.
+*   [x] **Robustness:** Type hints, input validation, NaN checks.
+*   [ ] **Dion CUDA Kernel:** Custom C++ extension for acceleration.
+*   [ ] **Convolutional Layers:** Extending `EPNetwork` for CNNs.
+*   [ ] **LLM Scaling:** Testing SDMEP on Transformer blocks.
 
 ---
 
 ## 🤝 Contributing
 
-**Join us in breaking the Backprop barrier!**
+Contributions are welcome! Please read `CONTRIBUTING.md` (coming soon) and run tests before submitting a PR.
+
+```bash
+# Run tests
+pytest tests/ -v
+```
+
+## 📜 License
+
+MIT License. See `LICENSE` for details.
 
 ---
 

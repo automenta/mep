@@ -134,13 +134,12 @@ class SMEPOptimizer(Optimizer):
         sigma = (u @ W @ v).abs()
         return sigma, u, v
 
-    def _prepare_target(self, target: torch.Tensor, num_classes: int) -> torch.Tensor:
-        """Convert target to one-hot if needed, preserving dtype for mixed precision."""
+    def _prepare_target(self, target: torch.Tensor, num_classes: int, dtype: torch.dtype) -> torch.Tensor:
+        """Convert target to one-hot if needed, matching dtype."""
         if target.dim() == 1:
-            one_hot = F.one_hot(target, num_classes=num_classes).float()
-            # F.one_hot always returns float32, which is correct for EP
+            one_hot = F.one_hot(target, num_classes=num_classes).to(dtype=dtype)
             return one_hot
-        return target
+        return target.to(dtype=dtype)
     
     def _inspect_model(self, model: nn.Module) -> List[dict]:
         """Extract sequence of layers and activations (cached)."""
@@ -255,7 +254,8 @@ class SMEPOptimizer(Optimizer):
         # Prepare target vector if needed
         target_vec = None
         if target is not None:
-            target_vec = self._prepare_target(target, states[-1].shape[-1])
+            # Use states[-1] dtype to ensure target matches computation precision (e.g. FP16)
+            target_vec = self._prepare_target(target, states[-1].shape[-1], dtype=states[-1].dtype)
         
         for _ in range(self.defaults['settle_steps']):
             state_optimizer.zero_grad()
@@ -283,8 +283,8 @@ class SMEPOptimizer(Optimizer):
         # 4. Compute Gradients via Contrast
         # We need gradients of Energy w.r.t parameters at fixed points.
         
-        # Prepare target (use helper)
-        target_vec = self._prepare_target(target, states_free[-1].shape[-1])
+        # Prepare target (use helper, matching free state precision)
+        target_vec = self._prepare_target(target, states_free[-1].shape[-1], dtype=states_free[-1].dtype)
 
         # E_free
         E_free = self._compute_energy(model, x, states_free, structure, target_vec=None, beta=0.0)

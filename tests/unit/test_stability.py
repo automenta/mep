@@ -134,7 +134,6 @@ def test_smep_vs_sdmep_consistency(device):
         assert diff < 1e-5, f"SMEP and SDMEP diverged on {n1}: max diff = {diff}"
 
 @pytest.mark.slow
-@pytest.mark.xfail(reason="FP16 support requires deeper changes to state settling mechanism")
 def test_mixed_precision_stability(device):
     """Test that optimizer works with half precision (FP16)."""
     if device == 'cpu':

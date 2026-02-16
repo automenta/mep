@@ -669,7 +669,21 @@ class SDMEPOptimizer(SMEPOptimizer):
 class LocalEPMuon(SMEPOptimizer):
     """
     EP with layer-local Newton-Schulz orthogonalization.
-    Preserves biological plausibility: no global gradient communication.
+
+    This optimizer enforces **biological plausibility** by preventing global gradient communication.
+    Instead of backpropagating errors across layers (or using global contrastive signals),
+    each layer computes its own local energy gradient based on its immediate input and output.
+
+    Key Features:
+    - **Layer-Local Updates:** Each layer updates independently using only local information.
+    - **No Weight Transport:** Avoids the need for symmetric feedback weights.
+    - **Contrastive Hebbian Learning:** Updates are driven by the difference between free and nudged phase activities.
+
+    Usage:
+        optimizer = LocalEPMuon(model.parameters(), model=model, mode='ep', beta=0.1)
+        # Standard EP loop
+        output = model(x)
+        optimizer.step(target=y)
     """
     def _compute_update(self, p, g_flat, group, state, g_aug, orig_shape):
         # Only use gradients from this layer's immediate context
@@ -748,7 +762,23 @@ class LocalEPMuon(SMEPOptimizer):
 class NaturalEPMuon(SMEPOptimizer):
     """
     EP with Natural Gradient descent on the energy landscape.
-    Uses Fisher Information Matrix induced by the EP energy function.
+
+    This optimizer uses the **Fisher Information Matrix** induced by the EP energy function
+    to perform updates in the natural parameter space, rather than Euclidean space.
+    This accounts for the geometry of the probability distribution over energy states.
+
+    Key Features:
+    - **Geometric Optimization:** Handles "sloppy" directions in parameter space.
+    - **Fisher Approximation:** Uses empirical Fisher information from free-phase gradients.
+    - **Whitening:** Applies whitening to the gradient before the Muon update.
+
+    Args:
+        fisher_approx (str): Approximation method for Fisher Information. Currently supports 'empirical'.
+                             Default: 'empirical' (F = g_free^T @ g_free).
+
+    Usage:
+        optimizer = NaturalEPMuon(model.parameters(), model=model, mode='ep', fisher_approx='empirical')
+        optimizer.step(target=y)
     """
     def __init__(self, params, fisher_approx='empirical', **kwargs):
         super().__init__(params, **kwargs)

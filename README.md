@@ -120,6 +120,47 @@ optimizer = SDMEPOptimizer(
 )
 ```
 
+### Alternative Optimizers
+
+**1. LocalEPMuon (Biologically Plausible)**
+Uses layer-local Newton-Schulz orthogonalization. Each layer computes updates independently based on its local input/output energy, avoiding any global error signal or backpropagation. This is ideal for neuromorphic hardware simulations.
+
+```python
+from mep.optimizers import LocalEPMuon
+optimizer = LocalEPMuon(
+    model.parameters(),
+    model=model,
+    mode='ep',
+    beta=0.1
+)
+```
+
+**2. NaturalEPMuon (Geometric Optimization)**
+Uses the Fisher Information Matrix (approximated empirically) to perform updates in the natural parameter space. This handles "sloppy" directions in the energy landscape better than Euclidean updates.
+
+```python
+from mep.optimizers import NaturalEPMuon
+optimizer = NaturalEPMuon(
+    model.parameters(),
+    model=model,
+    mode='ep',
+    fisher_approx='empirical'
+)
+```
+
+### Fine-Grained Control: Spectral Timing
+
+You can control *when* spectral constraints are applied to influence the energy landscape during settling:
+
+```python
+optimizer = SMEPOptimizer(
+    ...,
+    use_spectral_constraint=True,
+    spectral_timing='during_settling', # 'post_update', 'during_settling', or 'both'
+    spectral_lambda=1.0                # Strength of penalty during settling
+)
+```
+
 ---
 
 ## 📊 Benchmarks

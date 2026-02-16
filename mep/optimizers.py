@@ -297,7 +297,8 @@ class SMEPOptimizer(Optimizer):
             A = X.T @ X
             X = 0.5 * X @ (3 * identity - A)
 
-        res = X * norm  # Restore scale
+        # Do NOT restore scale. Return orthogonal matrix X.
+        res = X
 
         if transposed:
             res = res.T
@@ -644,6 +645,10 @@ class SMEPOptimizer(Optimizer):
 
                 grads = torch.autograd.grad(E, states, retain_graph=False, allow_unused=True)
 
+                if beta > 0 and step == 0:
+                    grad_norms = [g.norm().item() if g is not None else -1.0 for g in grads]
+                    print(f"DEBUG: Beta={beta}, E={E.item()}, Len(states)={len(states)}, Grad Norms={grad_norms}")
+
             for state, g in zip(states, grads):
                 if g is None:
                     continue
@@ -731,14 +736,28 @@ class SMEPOptimizer(Optimizer):
         # 1. Inspect model structure
         structure = self._inspect_model(model)
 
+        # Determine correct forward function (unwrap if necessary)
+        # This prevents recursive settling if the model is wrapped with EPWrapper
+        forward_fn = model
+        if hasattr(model.forward, "__self__") and isinstance(
+            model.forward.__self__, EPWrapper
+        ):
+            forward_fn = model.forward.__self__.original_forward
+
         # 2. Free Phase
-        states_free = self._settle(model, x, target=None, beta=0.0)
+        states_free = self._settle(
+            model, x, target=None, beta=0.0, forward_fn=forward_fn
+        )
 
         # 3. Nudged Phase
-        states_nudged = self._settle(model, x, target=target, beta=self.defaults["beta"])
+        states_nudged = self._settle(
+            model, x, target=target, beta=self.defaults["beta"], forward_fn=forward_fn
+        )
 
         # 4. Compute Gradients via Contrast
-        self._apply_ep_gradients(model, x, target, states_free, states_nudged, structure)
+        self._apply_ep_gradients(
+            model, x, target, states_free, states_nudged, structure
+        )
 
     @torch.no_grad()
     def step(  # type: ignore[override]
@@ -1065,9 +1084,9 @@ class SDMEPOptimizer(SMEPOptimizer):
                 # U: (M, r), S: (r,), V: (N, r)
                 U, S, V = torch.svd_lowrank(g_flat, q=rank)
 
-                # Reconstruct: U @ diag(S) @ V.T
-                # Efficiently: (U * S) @ V.T
-                update_lowrank = (U * S.unsqueeze(0)) @ V.T
+                # Reconstruct: U @ V.T (scale-invariant, analogous to Muon)
+                # This ignores the singular values S (gradient magnitude)
+                update_lowrank = U @ V.T
 
                 # Error Feedback: Update buffer with residual
                 residual = g_flat - update_lowrank

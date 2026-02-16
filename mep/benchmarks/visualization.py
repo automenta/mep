@@ -116,8 +116,10 @@ class BenchmarkVisualizer:
             'adamw': '#C73E1D',
             'muon': '#A23B72',
             'eqprop': '#6A994E',
-            'smep': '#2E86AB',
+            'smep': '#4EA8DE',
             'sdmep': '#2E86AB',
+            'local_ep': '#5C946E',
+            'natural_ep': '#3D5A80',
             'localepmuon': '#5C946E',
             'naturalepmuon': '#3D5A80'
         }
@@ -172,8 +174,8 @@ class BenchmarkVisualizer:
 
         color_map = {
             'sgd': '#F18F01', 'adam': '#C73E1D', 'adamw': '#C73E1D',
-            'muon': '#A23B72', 'eqprop': '#6A994E', 'smep': '#2E86AB',
-            'sdmep': '#2E86AB', 'localepmuon': '#5C946E', 'naturalepmuon': '#3D5A80'
+            'muon': '#A23B72', 'eqprop': '#6A994E', 'smep': '#4EA8DE',
+            'sdmep': '#2E86AB', 'local_ep': '#5C946E', 'natural_ep': '#3D5A80'
         }
 
         for opt_name, opt_data in results['optimizers'].items():

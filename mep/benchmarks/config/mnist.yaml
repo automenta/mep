@@ -1,0 +1,14 @@
+dataset: MNIST
+model: MLP
+architecture:
+  dims: [784, 1000, 10]
+optimizer: SDMEP
+learning_rate: 0.02
+momentum: 0.9
+weight_decay: 0.0005
+gamma: 0.95
+epochs: 10
+batch_size: 64
+seed: 42
+output_dir: benchmarks/experiments/mnist_sdmep
+wandb: false

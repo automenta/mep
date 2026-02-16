@@ -363,12 +363,22 @@ class SMEPOptimizer(Optimizer):
             dtype: Target dtype for one-hot encoding.
 
         Returns:
-            One-hot encoded target tensor.
+            One-hot encoded target tensor (MSE) or indices (CrossEntropy).
         """
-        if target.dim() == 1:
-            one_hot = F.one_hot(target, num_classes=num_classes).to(dtype=dtype)
-            return one_hot
-        return target.to(dtype=dtype)
+        loss_type = self.defaults.get("loss_type", "mse")
+        if loss_type == "cross_entropy":
+            # For classification: ensure we have class indices (LongTensor)
+            if target.dim() > 1 and target.shape[1] > 1:
+                # Convert one-hot to class indices
+                return target.argmax(dim=1).long()
+            # Handle potential (N, 1) or (N,) indices
+            return target.squeeze().long()
+        else:
+            # MSE: ensure one-hot if provided as indices
+            if target.dim() == 1:
+                one_hot = F.one_hot(target, num_classes=num_classes).to(dtype=dtype)
+                return one_hot
+            return target.to(dtype=dtype)
 
     def _inspect_model(self, model: nn.Module) -> Structure:
         """
@@ -459,7 +469,7 @@ class SMEPOptimizer(Optimizer):
                 h = module(prev)
 
                 # Energy mismatch (mean over batch for stability)
-                E = E + 0.5 * ((h - state) ** 2).sum() / batch_size
+                E = E + 0.5 * F.mse_loss(h, state, reduction="sum") / batch_size
 
                 # Next input base is current state
                 prev = state
@@ -474,13 +484,9 @@ class SMEPOptimizer(Optimizer):
             output = prev
             loss_type = self.defaults.get("loss_type", "mse")
             if loss_type == "cross_entropy":
-                # For classification: target_vec should be class indices
-                if target_vec.dim() > 1 and target_vec.shape[1] > 1:
-                    # Convert one-hot to class indices
-                    target_indices = target_vec.argmax(dim=1)
-                else:
-                    target_indices = target_vec.squeeze().long()
-                E = E + beta * F.cross_entropy(output, target_indices, reduction="sum") / batch_size
+                # For classification: target_vec contains class indices (Long)
+                # target_vec is already prepared by _prepare_target
+                E = E + beta * F.cross_entropy(output, target_vec, reduction="sum") / batch_size
             else:
                 # MSE for regression
                 E = E + beta * F.mse_loss(output, target_vec, reduction="sum") / batch_size
@@ -564,10 +570,10 @@ class SMEPOptimizer(Optimizer):
             )
 
         # Optimization loop
-        # Use SGD to relax states (lr now configurable)
-        state_optimizer = torch.optim.SGD(
-            states, lr=self.defaults["settle_lr"], momentum=self.SETTLING_MOMENTUM
-        )
+        # Manual SGD to relax states (avoids Optimizer overhead)
+        lr = self.defaults["settle_lr"]
+        momentum = self.SETTLING_MOMENTUM
+        momentum_buffers = [torch.zeros_like(s) for s in states]
 
         # Pre-calculate spectral penalty if needed
         spectral_penalty = torch.tensor(0.0, device=x.device, dtype=x.dtype)
@@ -622,7 +628,6 @@ class SMEPOptimizer(Optimizer):
         # Settling loop with energy monitoring
         prev_energy: Optional[float] = None
         for step in range(self.defaults["settle_steps"]):
-            state_optimizer.zero_grad()
             with torch.enable_grad():
                 E = self._compute_energy(model, x, states, structure, target_vec, beta)
                 if spectral_penalty > 0:
@@ -649,14 +654,18 @@ class SMEPOptimizer(Optimizer):
                     grad_norms = [g.norm().item() if g is not None else -1.0 for g in grads]
                     print(f"DEBUG: Beta={beta}, E={E.item()}, Len(states)={len(states)}, Grad Norms={grad_norms}")
 
-            for state, g in zip(states, grads):
-                if g is None:
-                    continue
-                if state.grad is None:
-                    state.grad = g.detach()
-                else:
-                    state.grad.copy_(g.detach())
-            state_optimizer.step()
+            # Manual SGD step
+            with torch.no_grad():
+                for i, (state, g) in enumerate(zip(states, grads)):
+                    if g is None:
+                        continue
+
+                    # Momentum update: v = m * v + g
+                    buf = momentum_buffers[i]
+                    buf.mul_(momentum).add_(g)
+
+                    # State update: s = s - lr * v
+                    state.sub_(buf, alpha=lr)
 
         return [s.detach() for s in states]
 
@@ -697,30 +706,27 @@ class SMEPOptimizer(Optimizer):
         )
 
         params_list = list(model.parameters())
-        grads_free = torch.autograd.grad(E_free, params_list, retain_graph=False, allow_unused=True)
-        grads_nudged = torch.autograd.grad(
-            E_nudged, params_list, retain_graph=False, allow_unused=True
-        )
 
-        for p, g_free, g_nudged in zip(model.parameters(), grads_free, grads_nudged):
-            if g_free is None or g_nudged is None:
+        # Optimize: Single backward pass for (E_nudged - E_free) / beta
+        loss = (E_nudged - E_free) / self.defaults["beta"]
+        grads = torch.autograd.grad(loss, params_list, retain_graph=False, allow_unused=True)
+
+        for p, g in zip(model.parameters(), grads):
+            if g is None:
                 continue
-            ep_grad = (g_nudged - g_free) / self.defaults["beta"]
 
             # Check for NaN/Inf in EP gradients
-            if torch.isnan(ep_grad).any() or torch.isinf(ep_grad).any():
+            if torch.isnan(g).any() or torch.isinf(g).any():
                 raise RuntimeError(
                     "EP gradient computation produced NaN/Inf. "
-                    f"Beta: {self.defaults['beta']}, "
-                    f"Free grad norm: {g_free.norm().item():.4f}, "
-                    f"Nudged grad norm: {g_nudged.norm().item():.4f}. "
+                    f"Beta: {self.defaults['beta']}. "
                     f"Try reducing beta or learning rate."
                 )
 
             if p.grad is None:
-                p.grad = ep_grad.detach()
+                p.grad = g.detach()
             else:
-                p.grad.add_(ep_grad.detach())
+                p.grad.add_(g.detach())
 
     def _compute_ep_gradients(
         self, model: nn.Module, x: torch.Tensor, target: torch.Tensor
@@ -1239,44 +1245,44 @@ class LocalEPMuon(SMEPOptimizer):
             in_free = free_data["input"].detach()
             out_free = free_data["output"].detach()
 
-            # Recompute forward pass for this layer to build graph
-            with torch.enable_grad():
-                pred_free = module(in_free)
-                # Mean over batch
-                E_free = 0.5 * ((pred_free - out_free) ** 2).sum() / x.shape[0]
-                module_params = list(module.parameters())
-                grads_free = torch.autograd.grad(
-                    E_free, module_params, retain_graph=False, allow_unused=True
-                )
-
             # --- Nudged Phase Local Gradient ---
             in_nudged = nudged_data["input"].detach()
             out_nudged = nudged_data["output"].detach()
 
+            module_params = list(module.parameters())
+
+            # Recompute forward pass for this layer to build graph
             with torch.enable_grad():
+                # Free Phase Energy
+                pred_free = module(in_free)
+                E_free = 0.5 * F.mse_loss(pred_free, out_free, reduction="sum") / x.shape[0]
+
+                # Nudged Phase Energy
                 pred_nudged = module(in_nudged)
-                E_nudged = 0.5 * ((pred_nudged - out_nudged) ** 2).sum() / x.shape[0]
-                grads_nudged = torch.autograd.grad(
-                    E_nudged, module_params, retain_graph=False, allow_unused=True
+                E_nudged = 0.5 * F.mse_loss(pred_nudged, out_nudged, reduction="sum") / x.shape[0]
+
+                # Combined Local Gradient
+                loss = (E_nudged - E_free) / self.defaults["beta"]
+                grads = torch.autograd.grad(
+                    loss, module_params, retain_graph=False, allow_unused=True
                 )
 
             # --- Update Gradients ---
-            for p, g_free, g_nudged in zip(module_params, grads_free, grads_nudged):
-                if g_free is None or g_nudged is None:
+            for p, g in zip(module_params, grads):
+                if g is None:
                     continue
-                ep_grad = (g_nudged - g_free) / self.defaults["beta"]
 
                 # Check for NaN/Inf
-                if torch.isnan(ep_grad).any() or torch.isinf(ep_grad).any():
+                if torch.isnan(g).any() or torch.isinf(g).any():
                     raise RuntimeError(
                         f"LocalEPMuon produced NaN/Inf for layer {module}. "
                         f"Try reducing beta or learning rate."
                     )
 
                 if p.grad is None:
-                    p.grad = ep_grad.detach()
+                    p.grad = g.detach()
                 else:
-                    p.grad.add_(ep_grad.detach())
+                    p.grad.add_(g.detach())
 
 
 class NaturalEPMuon(SMEPOptimizer):
@@ -1305,7 +1311,11 @@ class NaturalEPMuon(SMEPOptimizer):
     """
 
     def __init__(
-        self, params: Iterable[nn.Parameter], fisher_approx: str = "empirical", **kwargs: Any
+        self,
+        params: Iterable[nn.Parameter],
+        fisher_approx: str = "empirical",
+        use_diagonal_fisher: bool = False,
+        **kwargs: Any,
     ) -> None:
         """
         Initialize NaturalEPMuon.
@@ -1313,6 +1323,7 @@ class NaturalEPMuon(SMEPOptimizer):
         Args:
             params: Iterable of parameters.
             fisher_approx: Fisher approximation method ('empirical').
+            use_diagonal_fisher: Use diagonal approximation for Fisher matrix (faster).
             **kwargs: Additional arguments passed to SMEPOptimizer.
         """
         if fisher_approx not in ["empirical"]:
@@ -1321,6 +1332,7 @@ class NaturalEPMuon(SMEPOptimizer):
             )
         super().__init__(params, **kwargs)
         self.fisher_approx = fisher_approx
+        self.use_diagonal_fisher = use_diagonal_fisher
 
     def _compute_update(
         self,
@@ -1349,19 +1361,24 @@ class NaturalEPMuon(SMEPOptimizer):
         fisher_block = self._compute_fisher_block(p, state, g_flat)
 
         if fisher_block is not None:
-            # Whitening: solve(F + eps*I, g^T)^T -> g @ (F + eps*I)^-1
-            # Use a larger epsilon for stability with low-rank empirical Fisher
             damping = 1e-3
-            F = fisher_block + damping * torch.eye(
-                fisher_block.shape[0], device=fisher_block.device
-            )
-            try:
-                whitened = torch.linalg.solve(F, g_flat.T).T
-                if torch.isnan(whitened).any():
+            if self.use_diagonal_fisher:
+                # Diagonal whitening: g / (F + eps)
+                F = fisher_block + damping
+                whitened = g_flat / F.unsqueeze(0)
+            else:
+                # Whitening: solve(F + eps*I, g^T)^T -> g @ (F + eps*I)^-1
+                # Use a larger epsilon for stability with low-rank empirical Fisher
+                F = fisher_block + damping * torch.eye(
+                    fisher_block.shape[0], device=fisher_block.device
+                )
+                try:
+                    whitened = torch.linalg.solve(F, g_flat.T).T
+                    if torch.isnan(whitened).any():
+                        whitened = g_flat
+                except RuntimeError:
+                    # Fallback to raw gradient if solve fails
                     whitened = g_flat
-            except RuntimeError:
-                # Fallback to raw gradient if solve fails
-                whitened = g_flat
         else:
             whitened = g_flat
 
@@ -1390,9 +1407,14 @@ class NaturalEPMuon(SMEPOptimizer):
         if grad_free.shape != g_flat.shape:
             grad_free = grad_free.view(g_flat.shape)
 
-        # Empirical Fisher approximation: F = g_free^T @ g_free
-        # This gives (Cols, Cols).
-        F = grad_free.T @ grad_free
+        if self.use_diagonal_fisher:
+            # Diagonal approximation: sum(g**2, dim=0)
+            F = (grad_free**2).sum(dim=0)
+        else:
+            # Empirical Fisher approximation: F = g_free^T @ g_free
+            # This gives (Cols, Cols).
+            F = grad_free.T @ grad_free
+
         # Normalize by norm to keep scale reasonable
         F = F / (grad_free.norm() + 1e-6)
         return F  # type: ignore[no-any-return]

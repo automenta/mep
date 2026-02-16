@@ -298,54 +298,62 @@ optimizer = NaturalEPMuon(
 
 ### Experimental Setup
 
-- **Dataset:** MNIST (full training set)
-- **Model:** MLP (784 → 1000 → 10)
-- **Batch Size:** 64
-- **Epochs:** 10
+- **Dataset:** MNIST (5,000 samples subset)
+- **Model:** MLP (784 → 128 → 64 → 10)
+- **Batch Size:** 256
+- **Repeats:** 2 per optimizer
+- **Time per Trial:** ~20 seconds
 - **Device:** NVIDIA GPU (CUDA)
 
-### Accuracy Comparison
+### Final Test Accuracy Comparison
 
-| Optimizer | Epoch 1 | Epoch 5 | Epoch 10 | Time/Epoch (s) |
-|-----------|---------|---------|----------|----------------|
-| SGD | 92.1% | 96.8% | 97.2% | 0.8 |
-| Adam | 93.5% | 97.1% | 97.4% | 0.9 |
-| AdamW | 93.4% | 97.0% | 97.3% | 0.9 |
-| **EqProp** (vanilla EP) | 85.2% | 92.1% | 93.5% | 2.1 |
-| **Muon** (backprop) | 91.8% | 96.5% | 97.0% | 1.2 |
-| **SMEP** (Muon + EP) | 88.3% | 94.7% | 95.8% | 2.3 |
-| **SDMEP** (full) | 87.9% | 94.2% | 95.5% | 2.0 |
+| Optimizer | Mean Acc (%) | Std (%) | vs SGD | Time/Epoch (s) |
+|-----------|--------------|---------|--------|----------------|
+| **SGD** | 88.17 | 1.05 | — | 3.8 |
+| **Adam** | 93.54 | 0.05 | ✓ Better | 3.7 |
+| **AdamW** | — | — | — | — |
+| **Muon** (backprop) | 90.44 | 0.18 | No sig. diff | 3.8 |
+| **SMEP** (Muon + EP) | 9.09 | 0.05 | ✗ Worse | 5.4 |
+| **SDMEP** (full) | 8.85 | 0.08 | ✗ Worse | 4.5 |
 
-### Key Observations
+*Note: Statistical significance tested using Welch's t-test (α=0.05)*
 
-1.  **Backprop baselines (SGD, Adam)** achieve highest accuracy—expected since EP is inherently approximate.
-2.  **SMEP/SDMEP** close the gap significantly compared to vanilla EqProp, demonstrating the value of the S-D-M safety harness.
-3.  **SDMEP** is faster than SMEP on large models due to low-rank Dion updates.
-4.  **Settling overhead** is the primary cost of EP; future work will explore early stopping and amortized settling.
+### Key Findings
 
-### Spectral Norm Stability
+1.  **Adam achieves best accuracy** (93.54%) among tested optimizers on this task.
+2.  **Muon with backprop** performs competitively (90.44%) with SGD.
+3.  **EP variants (SMEP/SDMEP) struggle with classification** — achieving ~9% accuracy (random chance for 10 classes).
 
-SDMEP enforces spectral constraints throughout training:
+### Current Limitations of EP Implementation
 
-| Epoch | SMEP (σ_max) | SDMEP (σ_max) | Target (γ) |
-|-------|--------------|---------------|------------|
-| 0 | 1.42 | 1.38 | 0.95 |
-| 2 | 0.97 | 0.96 | 0.95 |
-| 5 | 0.95 | 0.95 | 0.95 |
-| 10 | 0.95 | 0.95 | 0.95 |
+The EP implementation in MEP v0.2.0 has the following known limitations:
 
-### Numerical Gradient Validation
+- **Classification Support:** EP uses MSE-based energy functions internally. While CrossEntropy support was added, the gradient contrast mechanism doesn't translate well to classification tasks.
+- **Settling Dynamics:** The free/nudged phase settling may not converge properly for deep networks with ReLU activations.
+- **Hyperparameter Sensitivity:** EP requires careful tuning of `beta`, `settle_steps`, and learning rate — optimal values differ significantly from backprop.
 
-EP gradients match finite-difference gradients with high fidelity:
+### When to Use Each Optimizer
 
-| Parameter | Cosine Similarity | Relative Error |
-|-----------|-------------------|----------------|
-| Layer 1 Weight | 0.97 | 8.2% |
-| Layer 1 Bias | 0.95 | 9.1% |
-| Layer 2 Weight | 0.96 | 7.8% |
-| Layer 2 Bias | 0.94 | 9.5% |
+| Use Case | Recommended Optimizer |
+|----------|----------------------|
+| Standard deep learning | **Adam** or **SGD** |
+| Muon orthogonalization | **Muon** (backprop mode) |
+| Regression with EP | **SMEP** (with `loss_type='mse'`) |
+| Biological plausibility research | **LocalEPMuon** |
+| Neuromorphic simulation | **SMEP** (EP mode, regression tasks) |
 
-*Validation: `pytest tests/integration/test_numerical_gradients.py -v`*
+### Validation Tests
+
+The EP implementation passes numerical gradient validation:
+
+| Test | Status |
+|------|--------|
+| XOR convergence (regression) | ✓ Pass (>95% accuracy) |
+| Numerical gradient match | ✓ Pass (cosine sim > 0.9) |
+| Spectral constraint enforcement | ✓ Pass (σ ≤ γ) |
+| MNIST classification | ✗ Fails (~9% accuracy) |
+
+*Run validation: `pytest tests/integration/ -v`*
 
 ---
 
@@ -385,10 +393,20 @@ Planned improvements:
 
 Contributions are welcome! Areas of interest:
 
-1.  **CUDA Kernels:** Optimize Dion SVD and Newton-Schulz iteration
-2.  **Architectures:** Extend to CNNs, Transformers, GNNs
-3.  **Benchmarks:** Evaluate on CIFAR-10, ImageNet, language tasks
-4.  **Theory:** Convergence proofs, connections to predictive coding
+### High Priority
+
+1.  **Fix EP Classification:** The EP implementation struggles with classification tasks. Potential solutions:
+    - Improve energy function formulation for CrossEntropy
+    - Add output layer-specific settling dynamics
+    - Explore alternative nudging mechanisms
+
+2.  **CUDA Kernels:** Optimize Dion SVD and Newton-Schulz iteration (5-10× speedup expected)
+
+### Research Extensions
+
+3.  **Architectures:** Extend to CNNs, Transformers, GNNs
+4.  **Benchmarks:** Evaluate on CIFAR-10, ImageNet, language tasks
+5.  **Theory:** Convergence proofs, connections to predictive coding
 
 ### Development Workflow
 

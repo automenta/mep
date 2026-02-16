@@ -131,6 +131,7 @@ class SMEPOptimizer(Optimizer):
         gamma: float = 0.95,
         spectral_timing: str = "post_update",
         spectral_lambda: float = 1.0,
+        loss_type: str = "mse",
     ) -> None:
         """
         Initialize SMEPOptimizer.
@@ -187,6 +188,7 @@ class SMEPOptimizer(Optimizer):
             gamma=gamma,
             spectral_timing=spectral_timing,
             spectral_lambda=spectral_lambda,
+            loss_type=loss_type,
         )
         super().__init__(params, defaults)
 
@@ -469,8 +471,18 @@ class SMEPOptimizer(Optimizer):
         # Nudge term (consistent reduction with E_int)
         if target_vec is not None and beta > 0:
             output = prev
-            # Use reduction='sum' then divide by batch_size for consistency
-            E = E + beta * F.mse_loss(output, target_vec, reduction="sum") / batch_size
+            loss_type = self.defaults.get("loss_type", "mse")
+            if loss_type == "cross_entropy":
+                # For classification: target_vec should be class indices
+                if target_vec.dim() > 1 and target_vec.shape[1] > 1:
+                    # Convert one-hot to class indices
+                    target_indices = target_vec.argmax(dim=1)
+                else:
+                    target_indices = target_vec.squeeze().long()
+                E = E + beta * F.cross_entropy(output, target_indices, reduction="sum") / batch_size
+            else:
+                # MSE for regression
+                E = E + beta * F.mse_loss(output, target_vec, reduction="sum") / batch_size
 
         # Numerical stability check
         if torch.isnan(E) or torch.isinf(E):

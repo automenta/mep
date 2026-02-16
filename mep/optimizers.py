@@ -228,7 +228,7 @@ class SMEPOptimizer(Optimizer):
         for m in model.modules():
             if isinstance(m, (nn.Linear, nn.Conv2d)):
                 structure.append({'type': 'layer', 'module': m})
-            elif isinstance(m, (nn.ReLU, nn.Sigmoid, nn.Tanh, nn.LeakyReLU, nn.Softmax)):
+            elif isinstance(m, (nn.ReLU, nn.Sigmoid, nn.Tanh, nn.LeakyReLU, nn.Softmax, nn.Flatten, nn.Dropout)):
                 structure.append({'type': 'act', 'module': m})
         
         self._model_structure_cache[model_id] = structure
@@ -790,9 +790,13 @@ class NaturalEPMuon(SMEPOptimizer):
 
         if fisher_block is not None:
              # Whitening: solve(F + eps*I, g^T)^T -> g @ (F + eps*I)^-1
-             F = fisher_block + self.EPSILON_NORM * torch.eye(fisher_block.shape[0], device=fisher_block.device)
+             # Use a larger epsilon for stability with low-rank empirical Fisher
+             damping = 1e-3
+             F = fisher_block + damping * torch.eye(fisher_block.shape[0], device=fisher_block.device)
              try:
                  whitened = torch.linalg.solve(F, g_flat.T).T
+                 if torch.isnan(whitened).any():
+                     whitened = g_flat
              except RuntimeError:
                  whitened = g_flat
         else:

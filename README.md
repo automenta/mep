@@ -120,9 +120,14 @@ optimizer = SDMEPOptimizer(
 )
 ```
 
-### Alternative Optimizers
+### Available Optimizers
 
-**1. LocalEPMuon (Biologically Plausible)**
+The framework provides three distinct optimizers, each tailored for specific needs:
+
+**1. SMEPOptimizer (The Standard)**
+The baseline implementation of Spectral Muon Equilibrium Propagation. It combines EP gradients (or backprop) with spectral normalization and Muon updates for stable, deep learning.
+
+**2. LocalEPMuon (Biologically Plausible)**
 Uses layer-local Newton-Schulz orthogonalization. Each layer computes updates independently based on its local input/output energy, avoiding any global error signal or backpropagation. This is ideal for neuromorphic hardware simulations.
 
 ```python
@@ -135,7 +140,7 @@ optimizer = LocalEPMuon(
 )
 ```
 
-**2. NaturalEPMuon (Geometric Optimization)**
+**3. NaturalEPMuon (Geometric Optimization)**
 Uses the Fisher Information Matrix (approximated empirically) to perform updates in the natural parameter space. This handles "sloppy" directions in the energy landscape better than Euclidean updates.
 
 ```python

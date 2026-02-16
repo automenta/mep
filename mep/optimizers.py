@@ -4,6 +4,41 @@ import torch.nn.functional as F
 from torch.optim import Optimizer
 from typing import Optional, Tuple, List, Iterable
 
+class EPWrapper:
+    """Wraps the model to add automatic free-phase settling in EP mode."""
+    def __init__(self, model: nn.Module, optimizer: 'SMEPOptimizer'):
+        self.model = model
+        self.optimizer = optimizer
+        self.original_forward = model.forward
+        self.free_states = []
+        self.last_input = None
+
+    def forward(self, x, phase='free', target=None, **kwargs):
+        # If optimizer is in backprop mode, just pass through
+        if self.optimizer.defaults['mode'] == 'backprop':
+            return self.original_forward(x, **kwargs)
+
+        if phase == 'free':
+            self.last_input = x
+            # Run settling
+            states = self.optimizer._settle(
+                self.model, x, target=None, beta=0.0,
+                forward_fn=self.original_forward
+            )
+            self.free_states = states
+            return states[-1] # Return output
+
+        elif phase == 'nudged':
+            # Nudged phase
+            states = self.optimizer._settle(
+                self.model, x, target=target, beta=self.optimizer.defaults['beta'],
+                forward_fn=self.original_forward
+            )
+            return states
+
+        else:
+            return self.original_forward(x, **kwargs)
+
 class SMEPOptimizer(Optimizer):
     """
     SMEP Optimizer: Spectral Muon Equilibrium Propagation
@@ -24,6 +59,7 @@ class SMEPOptimizer(Optimizer):
     def __init__(
         self, 
         params: Iterable, 
+        model: Optional[nn.Module] = None,
         lr: float = 0.02, 
         momentum: float = 0.9, 
         wd: float = 0.0005,
@@ -37,6 +73,25 @@ class SMEPOptimizer(Optimizer):
         use_spectral_constraint: bool = True,
         gamma: float = 0.95
     ):
+        """
+        Initialize SMEPOptimizer.
+
+        Args:
+            params: Iterable of parameters.
+            model: Optional model instance. Required for new EP API (mode='ep').
+            lr: Learning rate.
+            momentum: Momentum factor.
+            wd: Weight decay.
+            mode: 'backprop' or 'ep'.
+            beta: Nudging strength for EP.
+            settle_steps: Number of settling steps for EP.
+            settle_lr: Learning rate for settling optimization.
+            ns_steps: Newton-Schulz iterations.
+            use_error_feedback: Enable error feedback.
+            error_beta: Error feedback decay.
+            use_spectral_constraint: Enable spectral constraint.
+            gamma: Spectral norm bound.
+        """
         defaults = dict(
             lr=lr, momentum=momentum, wd=wd, ns_steps=ns_steps,
             mode=mode, beta=beta, settle_steps=settle_steps, settle_lr=settle_lr,
@@ -51,6 +106,20 @@ class SMEPOptimizer(Optimizer):
         
         # Cache for model structure to avoid repeated introspection
         self._model_structure_cache = {}
+
+        self.model = model
+        self.ep_wrapper = None
+
+        # Check if already wrapped and unwrap if so (to avoid nesting and ensure correct optimizer ref)
+        if self.model is not None:
+            if hasattr(self.model.forward, '__self__') and isinstance(self.model.forward.__self__, EPWrapper):
+                old_wrapper = self.model.forward.__self__
+                self.model.forward = old_wrapper.original_forward
+
+        if mode == 'ep' and self.model is not None:
+            # One-time wrap
+            self.ep_wrapper = EPWrapper(self.model, self)
+            self.model.forward = self.ep_wrapper.forward
 
     @torch.no_grad()
     def newton_schulz(self, G: torch.Tensor, steps: int) -> torch.Tensor:
@@ -205,11 +274,15 @@ class SMEPOptimizer(Optimizer):
         model: nn.Module, 
         x: torch.Tensor, 
         target: Optional[torch.Tensor] = None,
-        beta: float = 0.0
+        beta: float = 0.0,
+        forward_fn = None
     ) -> List[torch.Tensor]:
         """
         Settle network activations to minimize energy.
         """
+        if forward_fn is None:
+            forward_fn = model
+
         # Introspect model
         structure = self._inspect_model(model)
         
@@ -226,7 +299,7 @@ class SMEPOptimizer(Optimizer):
         
         try:
             with torch.no_grad():
-                model(x)
+                forward_fn(x)
         finally:
             for h in handles:
                 h.remove()
@@ -259,30 +332,31 @@ class SMEPOptimizer(Optimizer):
         
         for _ in range(self.defaults['settle_steps']):
             state_optimizer.zero_grad()
-            E = self._compute_energy(model, x, states, structure, target_vec, beta)
-            E.backward()
+            with torch.enable_grad():
+                E = self._compute_energy(model, x, states, structure, target_vec, beta)
+                grads = torch.autograd.grad(E, states, retain_graph=False)
+
+            for state, g in zip(states, grads):
+                if state.grad is None:
+                    state.grad = g.detach()
+                else:
+                    state.grad.copy_(g.detach())
             state_optimizer.step()
             
         return [s.detach() for s in states]
 
-    def _compute_ep_gradients(
+    def _apply_ep_gradients(
         self,
         model: nn.Module,
         x: torch.Tensor,
-        target: torch.Tensor
+        target: torch.Tensor,
+        states_free: List[torch.Tensor],
+        states_nudged: List[torch.Tensor],
+        structure: List[dict]
     ):
-        # 1. Inspect
-        structure = self._inspect_model(model)
-
-        # 2. Free Phase
-        states_free = self._settle(model, x, target=None, beta=0.0)
-        
-        # 3. Nudged Phase
-        states_nudged = self._settle(model, x, target=target, beta=self.defaults['beta'])
-        
-        # 4. Compute Gradients via Contrast
-        # We need gradients of Energy w.r.t parameters at fixed points.
-        
+        """
+        Compute and accumulate EP gradients given free and nudged states.
+        """
         # Prepare target (use helper, matching free state precision)
         target_vec = self._prepare_target(target, states_free[-1].shape[-1], dtype=states_free[-1].dtype)
 
@@ -301,7 +375,25 @@ class SMEPOptimizer(Optimizer):
             if p.grad is None:
                 p.grad = ep_grad.detach()
             else:
-                p.grad.copy_(ep_grad.detach())
+                p.grad.add_(ep_grad.detach())
+
+    def _compute_ep_gradients(
+        self,
+        model: nn.Module,
+        x: torch.Tensor,
+        target: torch.Tensor
+    ):
+        # 1. Inspect
+        structure = self._inspect_model(model)
+
+        # 2. Free Phase
+        states_free = self._settle(model, x, target=None, beta=0.0)
+
+        # 3. Nudged Phase
+        states_nudged = self._settle(model, x, target=target, beta=self.defaults['beta'])
+
+        # 4. Compute Gradients via Contrast
+        self._apply_ep_gradients(model, x, target, states_free, states_nudged, structure)
 
     @torch.no_grad()
     def step(
@@ -313,6 +405,20 @@ class SMEPOptimizer(Optimizer):
     ):
         """
         Perform optimization step.
+
+        New EP API:
+            optimizer = SMEPOptimizer(..., model=model, mode='ep')
+            output = model(x)  # Triggers free phase settling
+            optimizer.step(target=y)  # Triggers nudged phase & update
+
+        Legacy EP API:
+            optimizer = SMEPOptimizer(..., mode='ep')
+            optimizer.step(x=x, target=y, model=model)
+
+        Backprop API:
+            optimizer = SMEPOptimizer(..., mode='backprop')
+            loss.backward()
+            optimizer.step()
         """
         loss = None
         if closure is not None:
@@ -322,12 +428,39 @@ class SMEPOptimizer(Optimizer):
         # If mode='ep', compute gradients via EP
         mode = self.defaults['mode']
         if mode == 'ep':
-            if x is None or target is None or model is None:
-                raise ValueError("mode='ep' requires x, target, and model arguments")
-            
-            # Temporarily enable gradients for EP computation
-            with torch.enable_grad():
-                self._compute_ep_gradients(model, x, target)
+            if x is None:
+                # New mode: check if model wrapped and target present
+                if self.model is None or self.ep_wrapper is None:
+                     # Fallback check: maybe user forgot x but didn't wrap model?
+                     raise ValueError("For EP mode, pass model=model at optimizer creation OR pass x, target, model to step()")
+
+                if target is None:
+                     raise ValueError("EP mode requires target=y in step(target=y)")
+
+                x_input = self.ep_wrapper.last_input
+                if x_input is None:
+                     raise RuntimeError("In EP mode with wrapped model, you must call model(x) before optimizer.step(target=y)")
+
+                with torch.enable_grad():
+                    # Nudged phase
+                    states_nudged = self.ep_wrapper.forward(x_input, phase='nudged', target=target)
+                    states_free = self.ep_wrapper.free_states
+
+                    # Compute gradients
+                    structure = self._inspect_model(self.model)
+                    self._apply_ep_gradients(self.model, x_input, target, states_free, states_nudged, structure)
+
+            else:
+                # Legacy mode
+                if target is None or model is None:
+                    # If model was passed in init, use it as default
+                    model = model or self.model
+                    if model is None or target is None:
+                        raise ValueError("mode='ep' requires x, target, and model arguments")
+
+                # Temporarily enable gradients for EP computation
+                with torch.enable_grad():
+                    self._compute_ep_gradients(model, x, target)
         
         # Apply Muon updates (works for both backprop and EP gradients)
         for group in self.param_groups:
@@ -421,6 +554,7 @@ class SDMEPOptimizer(SMEPOptimizer):
     def __init__(
         self, 
         params: Iterable, 
+        model: Optional[nn.Module] = None,
         lr: float = 0.02, 
         momentum: float = 0.9, 
         wd: float = 0.0005,
@@ -439,6 +573,7 @@ class SDMEPOptimizer(SMEPOptimizer):
         # Call parent (SMEPOptimizer) constructor
         super().__init__(
             params=params,
+            model=model,
             lr=lr,
             momentum=momentum,
             wd=wd,

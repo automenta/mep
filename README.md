@@ -70,9 +70,12 @@ optimizer.step()  #  Applies Muon (Newton-Schulz) updates
 ```
 
 **Option 2: Equilibrium Propagation (Biology-inspired gradients)**
+
+**New API (Recommended):**
 ```python
 optimizer = SMEPOptimizer(
     model.parameters(), 
+    model=model,      # Pass model once
     lr=0.01, 
     mode='ep',        # Enable EP gradient computation
     beta=0.5,        # Nudge strength
@@ -82,7 +85,14 @@ optimizer = SMEPOptimizer(
 # EP workflow - no .backward() needed!
 x, y = next(dataloader)
 optimizer.zero_grad()
-optimizer.step(x=x, target=y, model=model)  # Computes EP gradients internally
+output = model(x)             # Automatic free-phase settling
+optimizer.step(target=y)      # Nudged phase + updates
+```
+
+**Legacy API:**
+```python
+optimizer = SMEPOptimizer(model.parameters(), lr=0.01, mode='ep')
+optimizer.step(x=x, target=y, model=model)
 ```
 
 ### Advanced Features (SMEP & SDMEP)

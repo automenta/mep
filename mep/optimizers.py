@@ -650,9 +650,9 @@ class SMEPOptimizer(Optimizer):
 
                 grads = torch.autograd.grad(E, states, retain_graph=False, allow_unused=True)
 
-                if beta > 0 and step == 0:
-                    grad_norms = [g.norm().item() if g is not None else -1.0 for g in grads]
-                    print(f"DEBUG: Beta={beta}, E={E.item()}, Len(states)={len(states)}, Grad Norms={grad_norms}")
+                # if beta > 0 and step == 0:
+                #     grad_norms = [g.norm().item() if g is not None else -1.0 for g in grads]
+                #     print(f"DEBUG: Beta={beta}, E={E.item()}, Len(states)={len(states)}, Grad Norms={grad_norms}")
 
             # Manual SGD step
             with torch.no_grad():

@@ -246,8 +246,8 @@ class SMEPOptimizer(Optimizer):
             raise ValueError(f"Settle steps must be positive, got {settle_steps}")
         if settle_lr <= 0:
             raise ValueError(f"Settle learning rate must be positive, got {settle_lr}")
-        if ns_steps <= 0:
-            raise ValueError(f"Newton-Schulz steps must be positive, got {ns_steps}")
+        if ns_steps < 0:
+            raise ValueError(f"Newton-Schulz steps must be non-negative, got {ns_steps}")
         if not (0 <= error_beta < 1):
             raise ValueError(f"Error beta must be in [0, 1), got {error_beta}")
         if not (0 < gamma <= 1):

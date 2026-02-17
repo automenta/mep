@@ -1,0 +1,362 @@
+"""
+Preset optimizer configurations.
+
+Factory functions for common optimizer combinations.
+"""
+
+import torch.nn as nn
+from typing import Iterable, Optional, Any
+
+from mep.optimizers import (
+    CompositeOptimizer,
+    BackpropGradient,
+    EPGradient,
+    LocalEPGradient,
+    NaturalGradient,
+    PlainUpdate,
+    MuonUpdate,
+    DionUpdate,
+    FisherUpdate,
+    NoConstraint,
+    SpectralConstraint,
+    NoFeedback,
+    ErrorFeedback,
+)
+
+
+def smep(
+    params: Iterable[nn.Parameter],
+    model: nn.Module,
+    mode: str = "backprop",
+    lr: float = 0.02,
+    momentum: float = 0.9,
+    weight_decay: float = 0.0005,
+    ns_steps: int = 5,
+    beta: float = 0.5,
+    settle_steps: int = 20,
+    settle_lr: float = 0.05,
+    gamma: float = 0.95,
+    spectral_timing: str = "post_update",
+    error_beta: float = 0.9,
+    use_error_feedback: bool = True,
+    loss_type: str = "mse",
+    **kwargs: Any
+) -> CompositeOptimizer:
+    """
+    SMEP: Spectral Muon Equilibrium Propagation.
+    
+    Combines:
+    - EP or backprop gradients
+    - Muon (Newton-Schulz) orthogonalization
+    - Spectral norm constraints
+    - Error feedback
+    
+    Args:
+        params: Parameters to optimize.
+        model: Model instance.
+        mode: 'backprop' or 'ep'.
+        lr: Learning rate.
+        momentum: Momentum factor.
+        weight_decay: Weight decay.
+        ns_steps: Newton-Schulz iterations.
+        beta: EP nudging strength.
+        settle_steps: EP settling iterations.
+        settle_lr: Settling learning rate.
+        gamma: Spectral norm bound.
+        spectral_timing: When to apply spectral constraint.
+        error_beta: Error feedback decay.
+        use_error_feedback: Enable error feedback.
+        loss_type: 'mse' or 'cross_entropy'.
+    
+    Returns:
+        Configured CompositeOptimizer.
+    """
+    # Gradient strategy
+    if mode == "ep":
+        gradient = EPGradient(
+            beta=beta,
+            settle_steps=settle_steps,
+            settle_lr=settle_lr,
+            loss_type=loss_type,
+        )
+    else:
+        gradient = BackpropGradient()
+    
+    # Update strategy
+    update = MuonUpdate(ns_steps=ns_steps)
+    
+    # Constraint strategy
+    constraint = SpectralConstraint(
+        gamma=gamma,
+        timing=spectral_timing,
+    )
+    
+    # Feedback strategy
+    feedback = ErrorFeedback(beta=error_beta) if use_error_feedback else NoFeedback()
+    
+    return CompositeOptimizer(
+        params,
+        gradient=gradient,
+        update=update,
+        constraint=constraint,
+        feedback=feedback,
+        lr=lr,
+        momentum=momentum,
+        weight_decay=weight_decay,
+        model=model,
+        **kwargs
+    )
+
+
+def sdmep(
+    params: Iterable[nn.Parameter],
+    model: nn.Module,
+    lr: float = 0.02,
+    momentum: float = 0.9,
+    weight_decay: float = 0.0005,
+    ns_steps: int = 5,
+    beta: float = 0.5,
+    settle_steps: int = 20,
+    settle_lr: float = 0.05,
+    gamma: float = 0.95,
+    rank_frac: float = 0.2,
+    dion_thresh: int = 100000,
+    error_beta: float = 0.9,
+    loss_type: str = "mse",
+    **kwargs: Any
+) -> CompositeOptimizer:
+    """
+    SDMEP: Spectral Dion-Muon Equilibrium Propagation.
+    
+    Like SMEP but uses low-rank SVD (Dion) for large matrices.
+    
+    Args:
+        params: Parameters to optimize.
+        model: Model instance.
+        lr: Learning rate.
+        momentum: Momentum factor.
+        weight_decay: Weight decay.
+        ns_steps: Newton-Schulz iterations.
+        beta: EP nudging strength.
+        settle_steps: EP settling iterations.
+        settle_lr: Settling learning rate.
+        gamma: Spectral norm bound.
+        rank_frac: Fraction of singular values to retain.
+        dion_thresh: Parameter threshold for Dion vs Muon.
+        error_beta: Error feedback decay.
+        loss_type: 'mse' or 'cross_entropy'.
+    
+    Returns:
+        Configured CompositeOptimizer.
+    """
+    gradient = EPGradient(
+        beta=beta,
+        settle_steps=settle_steps,
+        settle_lr=settle_lr,
+        loss_type=loss_type,
+    )
+    
+    update = DionUpdate(
+        rank_frac=rank_frac,
+        threshold=dion_thresh,
+        muon_fallback=MuonUpdate(ns_steps=ns_steps),
+    )
+    
+    constraint = SpectralConstraint(gamma=gamma)
+    
+    feedback = ErrorFeedback(beta=error_beta)
+    
+    return CompositeOptimizer(
+        params,
+        gradient=gradient,
+        update=update,
+        constraint=constraint,
+        feedback=feedback,
+        lr=lr,
+        momentum=momentum,
+        weight_decay=weight_decay,
+        model=model,
+        **kwargs
+    )
+
+
+def local_ep(
+    params: Iterable[nn.Parameter],
+    model: nn.Module,
+    lr: float = 0.02,
+    momentum: float = 0.9,
+    weight_decay: float = 0.0005,
+    ns_steps: int = 5,
+    beta: float = 0.1,
+    settle_steps: int = 20,
+    settle_lr: float = 0.05,
+    gamma: float = 0.95,
+    loss_type: str = "mse",
+    **kwargs: Any
+) -> CompositeOptimizer:
+    """
+    LocalEPMuon: Layer-local EP with Muon orthogonalization.
+    
+    Biologically plausible: each layer updates using only local information.
+    
+    Args:
+        params: Parameters to optimize.
+        model: Model instance.
+        lr: Learning rate.
+        momentum: Momentum factor.
+        weight_decay: Weight decay.
+        ns_steps: Newton-Schulz iterations.
+        beta: EP nudging strength.
+        settle_steps: EP settling iterations.
+        settle_lr: Settling learning rate.
+        gamma: Spectral norm bound.
+        loss_type: 'mse' or 'cross_entropy'.
+    
+    Returns:
+        Configured CompositeOptimizer.
+    """
+    gradient = LocalEPGradient(
+        beta=beta,
+        settle_steps=settle_steps,
+        settle_lr=settle_lr,
+        loss_type=loss_type,
+    )
+    
+    update = MuonUpdate(ns_steps=ns_steps)
+    constraint = SpectralConstraint(gamma=gamma)
+    feedback = NoFeedback()  # Local EP doesn't use error feedback
+    
+    return CompositeOptimizer(
+        params,
+        gradient=gradient,
+        update=update,
+        constraint=constraint,
+        feedback=feedback,
+        lr=lr,
+        momentum=momentum,
+        weight_decay=weight_decay,
+        model=model,
+        **kwargs
+    )
+
+
+def natural_ep(
+    params: Iterable[nn.Parameter],
+    model: nn.Module,
+    lr: float = 0.02,
+    momentum: float = 0.9,
+    weight_decay: float = 0.0005,
+    ns_steps: int = 5,
+    beta: float = 0.5,
+    settle_steps: int = 20,
+    settle_lr: float = 0.05,
+    gamma: float = 0.95,
+    fisher_approx: str = "empirical",
+    fisher_damping: float = 1e-3,
+    use_diagonal_fisher: bool = False,
+    loss_type: str = "mse",
+    **kwargs: Any
+) -> CompositeOptimizer:
+    """
+    NaturalEPMuon: Natural gradient EP with Fisher whitening.
+    
+    Uses Fisher Information Matrix for geometry-aware updates.
+    
+    Args:
+        params: Parameters to optimize.
+        model: Model instance.
+        lr: Learning rate.
+        momentum: Momentum factor.
+        weight_decay: Weight decay.
+        ns_steps: Newton-Schulz iterations.
+        beta: EP nudging strength.
+        settle_steps: EP settling iterations.
+        settle_lr: Settling learning rate.
+        gamma: Spectral norm bound.
+        fisher_approx: Fisher approximation method.
+        fisher_damping: Damping for Fisher matrix inversion.
+        use_diagonal_fisher: Use diagonal Fisher approximation.
+        loss_type: 'mse' or 'cross_entropy'.
+    
+    Returns:
+        Configured CompositeOptimizer.
+    """
+    base_gradient = EPGradient(
+        beta=beta,
+        settle_steps=settle_steps,
+        settle_lr=settle_lr,
+        loss_type=loss_type,
+    )
+    
+    gradient = NaturalGradient(
+        base_strategy=base_gradient,
+        fisher_approx=fisher_approx,
+        use_diagonal=use_diagonal_fisher,
+    )
+    
+    update = FisherUpdate(
+        damping=fisher_damping,
+        ns_steps=ns_steps,
+        use_diagonal=use_diagonal_fisher,
+    )
+    
+    constraint = SpectralConstraint(gamma=gamma)
+    feedback = NoFeedback()
+    
+    return CompositeOptimizer(
+        params,
+        gradient=gradient,
+        update=update,
+        constraint=constraint,
+        feedback=feedback,
+        lr=lr,
+        momentum=momentum,
+        weight_decay=weight_decay,
+        model=model,
+        **kwargs
+    )
+
+
+def muon_backprop(
+    params: Iterable[nn.Parameter],
+    lr: float = 0.02,
+    momentum: float = 0.9,
+    weight_decay: float = 0.0005,
+    ns_steps: int = 5,
+    gamma: float = 0.95,
+    use_spectral: bool = True,
+    **kwargs: Any
+) -> CompositeOptimizer:
+    """
+    Muon optimizer with standard backpropagation.
+    
+    A drop-in replacement for SGD/Adam with Muon orthogonalization.
+    
+    Args:
+        params: Parameters to optimize.
+        lr: Learning rate.
+        momentum: Momentum factor.
+        weight_decay: Weight decay.
+        ns_steps: Newton-Schulz iterations.
+        gamma: Spectral norm bound.
+        use_spectral: Enable spectral constraints.
+    
+    Returns:
+        Configured CompositeOptimizer.
+    """
+    gradient = BackpropGradient()
+    update = MuonUpdate(ns_steps=ns_steps)
+    constraint = SpectralConstraint(gamma=gamma) if use_spectral else NoConstraint()
+    feedback = NoFeedback()
+    
+    return CompositeOptimizer(
+        params,
+        gradient=gradient,
+        update=update,
+        constraint=constraint,
+        feedback=feedback,
+        lr=lr,
+        momentum=momentum,
+        weight_decay=weight_decay,
+        **kwargs
+    )

@@ -18,7 +18,7 @@ We present **Spectral Dion-Muon Equilibrium Propagation (SDMEP)**, a refactored 
 2.  **Dion Low-Rank Updates (D):** For large weight matrices, low-rank SVD with error feedback reduces computational cost while preserving gradient information in the dominant subspace.
 3.  **Muon Orthogonalization (M):** Newton-Schulz iteration orthogonalizes gradients, improving conditioning and enabling stable training at greater depths.
 
-Our framework achieves **competitive performance on MNIST benchmarks** (90.4% vs 93.8% for SGD), validates EP gradients against numerical differentiation, and reveals surprising strengths in **continual learning** (46× less forgetting than SGD). SDMEP is designed as a research platform for neuromorphic computing, continual learning, and energy-efficient deep learning on analog hardware.
+This framework is designed as a research platform for exploring biologically plausible learning, neuromorphic computing, continual learning, and energy-efficient deep learning on analog hardware.
 
 **Keywords:** Equilibrium Propagation, Biologically Plausible Learning, Energy-Based Models, Spectral Normalization, Low-Rank Optimization, Neuromorphic Computing, Continual Learning
 
@@ -30,7 +30,6 @@ Our framework achieves **competitive performance on MNIST benchmarks** (90.4% vs
 - [Introduction](#-introduction-the-backpropagation-bottleneck)
 - [The MEP Framework](#-the-mep-framework)
 - [Quick Start](#-quick-start)
-- [Benchmark Results](#-benchmark-results)
 - [Optimizer Selection Guide](#-optimizer-selection-guide)
 - [Architecture: Strategy Pattern](#-architecture-strategy-pattern)
 - [Understanding EP](#-understanding-ep-a-visual-guide)
@@ -154,65 +153,24 @@ optimizer = smep(
 
 ---
 
-## 📊 Benchmark Results
-
-### Classification (MNIST, 10 epochs, 3000 train / 500 test)
-
-| Optimizer | Best Val Acc | Gap to SGD | Time/Epoch |
-|-----------|--------------|------------|------------|
-| **SGD** | 93.8% | — | 0.57s |
-| **Adam** | 93.8% | 0.0% | 0.57s |
-| **SMEP** | 90.4% | 3.4% | 1.79s |
-| **Muon** | 89.0% | 4.8% | 0.67s |
-| **EqProp** | 74.8% | 19.0% | 1.89s |
-| **SDMEP** | 15.0%* | 78.8% | 2.06s |
-
-*SDMEP fails on small models; Dion requires large matrices (>100K params).
-
-**Key findings:**
-- SMEP achieves 90.4% accuracy—competitive for a biologically plausible optimizer
-- EP is ~3× slower due to settling iterations
-- Error feedback causes instability in single-task classification
-
-### Continual Learning (Average Forgetting, 4 tasks)
-
-| Optimizer | Forgetting | Relative to SGD |
-|-----------|------------|-----------------|
-| **SMEP + Error Feedback** | **0.04** | **46× better** |
-| SMEP (no EF) | 0.47 | 4× better |
-| **SGD** | **1.85** | baseline |
-
-**Key findings:**
-- Error feedback dramatically reduces catastrophic forgetting
-- Acts as implicit gradient replay without storing data
-- Promising direction for lifelong learning applications
-
-### Regression (Synthetic, MSE)
-
-| Optimizer | Final MSE | Stability |
-|-----------|-----------|-----------|
-| **SGD** | **0.0031** | ✅ Stable |
-| **Adam** | 0.0046 | ✅ Stable |
-| SMEP | 4.28 | ❌ Unstable |
-| SMEP+EF | 345.68 | ❌❌ Diverges |
-
-**Key findings:**
-- EP shows severe instability on regression despite natural MSE alignment
-- This is an **open research problem**
-
----
-
 ## 🎯 Optimizer Selection Guide
 
-| Use Case | Recommended | Configuration |
-|----------|-------------|---------------|
+| Use Case | Recommended | Configuration Notes |
+|----------|-------------|---------------------|
 | Standard classification | **Adam/SGD** | Default settings |
 | Biological plausibility research | **SMEP** | `use_error_feedback=False` |
 | Continual/lifelong learning | **SMEP+EF** | `use_error_feedback=True, error_beta=0.95` |
-| Memory-constrained (deep nets) | **EP** | O(1) memory |
+| Memory-constrained (deep nets) | **EP** | O(1) memory vs O(depth) for backprop |
 | Neuromorphic hardware | **SMEP/LocalEP** | Local learning rules |
 | Very deep networks | **Muon** | Backprop + orthogonalization |
 | Large models (>1M params/layer) | **SDMEP** | `dion_thresh=200000` |
+
+### Key Observations from Benchmarking
+
+- **Classification**: EP-based methods show competitive performance with careful hyperparameter tuning
+- **Continual Learning**: Error feedback dramatically reduces catastrophic forgetting
+- **Regression**: EP shows instability despite natural MSE alignment—an open research problem
+- **Speed**: EP is ~3× slower than backprop due to settling iterations
 
 ---
 
@@ -328,7 +286,7 @@ For classification with CrossEntropy:
 
 ### 1. Why Does Regression Fail?
 
-Despite EP's energy function naturally matching MSE loss, we observed severe instability (MSE explodes after ~10 epochs).
+Despite EP's energy function naturally matching MSE loss, we observed severe instability during training.
 
 **Hypotheses:**
 - Settling dynamics create positive feedback loop
@@ -336,19 +294,19 @@ Despite EP's energy function naturally matching MSE loss, we observed severe ins
 - Energy landscape has poor local minima
 
 **Potential fixes:**
-- Lower settling learning rate (0.01 → 0.001)
+- Lower settling learning rate
 - Gradient clipping during settling
 - Energy-based early stopping
 - Different energy function formulation
 
 **This is an open problem—contributions welcome!**
 
-### 2. Can We Close the Classification Gap?
+### 2. Closing the Classification Gap
 
-SMEP achieves 90.4% vs SGD's 93.8% on MNIST. The 3.4% gap is acceptable for research but limits practical adoption.
+EP-based methods show competitive but not state-of-the-art performance on standard benchmarks.
 
 **Potential improvements:**
-- Adaptive settling (stop when energy converges) - potential 30-50% speedup
+- Adaptive settling (stop when energy converges)
 - Better energy functions for classification
 - Layer-wise learning rates
 - Batch normalization integration
@@ -356,18 +314,18 @@ SMEP achieves 90.4% vs SGD's 93.8% on MNIST. The 3.4% gap is acceptable for rese
 
 ### 3. SDMEP for Large Models
 
-Dion (low-rank SVD) should shine for large matrices but currently fails on small models (15% accuracy).
+Dion (low-rank SVD) should shine for large matrices but requires careful tuning.
 
 **Needed:**
 - Better rank selection heuristics (adaptive based on gradient spectrum)
-- Higher rank_frac for small models (0.3 → 0.5+)
-- Higher dion_thresh to avoid Dion on small layers
+- Automatic threshold selection
+- Performance characterization for different model sizes
 
-**Promise:** For models with >1M params per layer, Dion could provide significant speedup.
+**Promise:** For models with very large layers, Dion could provide significant speedup.
 
 ### 4. Neuromorphic Hardware Integration
 
-EP's local learning rules are a natural fit for analog hardware, but no public implementations exist.
+EP's local learning rules are a natural fit for analog hardware, but public implementations are limited.
 
 **Potential targets:**
 - Optical neural networks (continuous-time dynamics)
@@ -379,13 +337,25 @@ EP's local learning rules are a natural fit for analog hardware, but no public i
 
 ### 5. Continual Learning Mechanisms
 
-Error feedback reduces forgetting by 46×, but the mechanism is not well understood.
+Error feedback shows promise for reducing catastrophic forgetting, but the mechanism requires deeper understanding.
 
 **Questions:**
 - How much history does the buffer retain?
-- Is there an optimal error_beta for different task sequences?
+- What is the optimal error_beta for different task sequences?
 - Can we combine with explicit replay for even better results?
 - Does this work for domain-incremental (not just task-incremental) learning?
+
+### 6. Application Domain Discovery
+
+We are actively exploring where EP-based optimizers excel:
+
+- **Continual/lifelong learning**: Error feedback as implicit replay
+- **Memory-constrained scenarios**: O(1) memory for very deep networks
+- **Neuromorphic hardware**: Natural fit for local learning rules
+- **Energy-based modeling**: Direct alignment with EP's energy formulation
+- **Online learning**: Event-based dynamics for streaming data
+
+**The full potential of EP is still being discovered.**
 
 ---
 
@@ -439,7 +409,7 @@ mep/
 Contributions welcome! High-priority areas:
 
 1.  **Fix regression instability** - EP should excel here
-2.  **Adaptive settling** - Early stopping for 30-50% speedup
+2.  **Adaptive settling** - Early stopping for speedup
 3.  **SDMEP tuning** - Better rank selection for large models
 4.  **Continual learning benchmarks** - More task sequences, domains
 5.  **Hardware demos** - Neuromorphic chip implementations

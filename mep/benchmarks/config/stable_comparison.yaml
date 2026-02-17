@@ -1,3 +1,6 @@
+# Stable benchmark configuration (SDMEP excluded due to known stability issues)
+# See README.md for details on EP limitations with classification tasks
+
 dataset: MNIST
 model: MLP
 architecture:
@@ -7,7 +10,6 @@ baselines:
   - adam
   - muon
   - smep
-  - sdmep
   - local_ep
   - natural_ep
   - eqprop
@@ -23,5 +25,5 @@ dion_thresh: 50000
 batch_size: 256
 subset_size: 5000
 seed: 42
-output_dir: benchmarks/results/full_comparison
+output_dir: benchmarks/results/stable_comparison
 wandb: false

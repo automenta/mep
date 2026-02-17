@@ -23,6 +23,26 @@ class BenchmarkVisualizer:
         plt.rcParams['figure.dpi'] = 150
         plt.rcParams['savefig.dpi'] = 300
 
+    @staticmethod
+    def _format_optimizer_name(name: str) -> str:
+        """Format optimizer name for display."""
+        name = name.upper()
+        # Format common names for better readability
+        formatting_map = {
+            'SGD': 'SGD',
+            'ADAM': 'Adam',
+            'ADAMW': 'AdamW',
+            'MUON': 'Muon',
+            'EQPROP': 'EqProp',
+            'SMEP': 'SMEP',
+            'SDMEP': 'SDMEP',
+            'LOCAL_EP': 'LocalEP',
+            'NATURAL_EP': 'NaturalEP',
+            'LOCALEPMUON': 'LocalEP',
+            'NATURALEPMUON': 'NaturalEP',
+        }
+        return formatting_map.get(name, name)
+
     def plot_optimizer_comparison_with_stats(
         self,
         results: Dict[str, Any],
@@ -35,7 +55,7 @@ class BenchmarkVisualizer:
             results: Complete results dictionary from run_benchmarks
             metric: Metric to compare ('final_test_accuracy')
         """
-        fig, ax = plt.subplots(figsize=(12, 7))
+        fig, ax = plt.subplots(figsize=(14, 8))
 
         optimizer_names = []
         means = []
@@ -43,19 +63,22 @@ class BenchmarkVisualizer:
 
         for opt_name, opt_data in results['optimizers'].items():
             stats = opt_data['statistics']['final_test_accuracy']
-            optimizer_names.append(opt_name.upper())
+            optimizer_names.append(self._format_optimizer_name(opt_name))
             means.append(stats['mean'] * 100)  # Convert to percentage
             stds.append(stats['std'] * 100)
 
-        # Color scheme: highlight EP variants
+        # Color scheme: distinguish baselines from EP variants
         colors = []
         for name in optimizer_names:
-            if 'EP' in name or 'SDMEP' in name or 'SMEP' in name:
+            name_lower = name.lower()
+            if name_lower in ['sgd', 'adam', 'adamw']:
+                colors.append('#F18F01')  # Orange for standard baselines
+            elif name_lower == 'muon':
+                colors.append('#A23B72')  # Purple for Muon (backprop)
+            elif 'EP' in name or 'SDMEP' in name or 'SMEP' in name:
                 colors.append('#2E86AB')  # Blue for EP variants
-            elif 'MUON' in name:
-                colors.append('#A23B72')  # Purple for Muon
             else:
-                colors.append('#F18F01')  # Orange for baselines
+                colors.append('#666666')  # Gray for others
 
         x_pos = np.arange(len(optimizer_names))
         bars = ax.bar(x_pos, means, yerr=stds, capsize=5, color=colors, alpha=0.8,
@@ -107,21 +130,21 @@ class BenchmarkVisualizer:
         Args:
             results: Complete results dictionary
         """
-        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+        fig, axes = plt.subplots(1, 2, figsize=(16, 7))
 
-        # Color mapping for optimizers
+        # Color mapping for optimizers (consistent across all plots)
         color_map = {
             'sgd': '#F18F01',
-            'adam': '#C73E1D',
-            'adamw': '#C73E1D',
+            'adam': '#F18F01',
+            'adamw': '#F18F01',
             'muon': '#A23B72',
-            'eqprop': '#6A994E',
-            'smep': '#4EA8DE',
-            'sdmep': '#2E86AB',
+            'eqprop': '#2E86AB',
+            'smep': '#2E86AB',
+            'sdmep': '#1a5f7a',
             'local_ep': '#5C946E',
             'natural_ep': '#3D5A80',
             'localepmuon': '#5C946E',
-            'naturalepmuon': '#3D5A80'
+            'naturalepmuon': '#3D5A80',
         }
 
         # Plot training curves
@@ -170,12 +193,21 @@ class BenchmarkVisualizer:
         """
         Plot test accuracy over epochs for all optimizers.
         """
-        fig, ax = plt.subplots(figsize=(12, 7))
+        fig, ax = plt.subplots(figsize=(14, 8))
 
+        # Consistent color mapping
         color_map = {
-            'sgd': '#F18F01', 'adam': '#C73E1D', 'adamw': '#C73E1D',
-            'muon': '#A23B72', 'eqprop': '#6A994E', 'smep': '#4EA8DE',
-            'sdmep': '#2E86AB', 'local_ep': '#5C946E', 'natural_ep': '#3D5A80'
+            'sgd': '#F18F01',
+            'adam': '#F18F01',
+            'adamw': '#F18F01',
+            'muon': '#A23B72',
+            'eqprop': '#2E86AB',
+            'smep': '#2E86AB',
+            'sdmep': '#1a5f7a',
+            'local_ep': '#5C946E',
+            'natural_ep': '#3D5A80',
+            'localepmuon': '#5C946E',
+            'naturalepmuon': '#3D5A80',
         }
 
         for opt_name, opt_data in results['optimizers'].items():
@@ -212,7 +244,20 @@ class BenchmarkVisualizer:
         """
         Plot time per epoch and time per step analysis.
         """
-        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+        fig, axes = plt.subplots(1, 2, figsize=(18, 7))
+
+        # Consistent color mapping
+        color_map = {
+            'sgd': '#F18F01',
+            'adam': '#F18F01',
+            'adamw': '#F18F01',
+            'muon': '#A23B72',
+            'eqprop': '#2E86AB',
+            'smep': '#2E86AB',
+            'sdmep': '#1a5f7a',
+            'local_ep': '#5C946E',
+            'natural_ep': '#3D5A80',
+        }
 
         # 1. Time per Epoch
         optimizer_names = []
@@ -251,9 +296,12 @@ class BenchmarkVisualizer:
         if optimizer_names:
             x_pos = np.arange(len(optimizer_names))
 
+            # Bar colors based on optimizer type
+            bar_colors = [color_map.get(name.lower(), '#666666') for name in optimizer_names]
+
             # Epoch Time Plot
             bars1 = axes[0].bar(x_pos, epoch_means, yerr=epoch_stds, capsize=5,
-                          color='#5C946E', alpha=0.8, edgecolor='black')
+                          color=bar_colors, alpha=0.8, edgecolor='black')
             axes[0].set_xlabel('Optimizer', fontsize=12, fontweight='bold')
             axes[0].set_ylabel('Time per Epoch (s)', fontsize=12, fontweight='bold')
             axes[0].set_title('Training Time per Epoch', fontsize=14, fontweight='bold')
@@ -267,7 +315,7 @@ class BenchmarkVisualizer:
 
             # Step Time Plot
             bars2 = axes[1].bar(x_pos, step_means, yerr=step_stds, capsize=5,
-                          color='#A23B72', alpha=0.8, edgecolor='black')
+                          color=bar_colors, alpha=0.8, edgecolor='black')
             axes[1].set_xlabel('Optimizer', fontsize=12, fontweight='bold')
             axes[1].set_ylabel('Time per Step (ms)', fontsize=12, fontweight='bold')
             axes[1].set_title('Computational Cost per Step', fontsize=14, fontweight='bold')
@@ -332,7 +380,7 @@ class BenchmarkVisualizer:
                 else:
                     comparison = "No sig. diff"
 
-            report.append(f"| {opt_name.upper()} | {mean_acc:.2f} | {std_acc:.2f} | {min_acc:.2f} | {max_acc:.2f} | {comparison} |")
+            report.append(f"| {self._format_optimizer_name(opt_name)} | {mean_acc:.2f} | {std_acc:.2f} | {min_acc:.2f} | {max_acc:.2f} | {comparison} |")
 
         report.append("\n*Note: Statistical significance tested using Welch's t-test (α=0.05)*\n")
 

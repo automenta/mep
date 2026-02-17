@@ -31,8 +31,10 @@ from mep.benchmarks.visualization import BenchmarkVisualizer
 
 try:
     import wandb
+    WANDB_AVAILABLE = True
 except ImportError:
     wandb = None
+    WANDB_AVAILABLE = False
 
 
 def seed_everything(seed: int = 42) -> None:
@@ -495,12 +497,21 @@ def run_benchmarks(
         json.dump(json_results, f, indent=2)
     print(f"\nResults saved to: {results_file}")
 
-    # Generate visualizations
+    # Generate all visualizations
     visualizer = BenchmarkVisualizer(output_dir)
     visualizer.plot_optimizer_comparison_with_stats(all_results, metric='final_test_accuracy')
     visualizer.plot_training_curves_all(all_results)
+    visualizer.plot_test_accuracy_comparison(all_results)
+    visualizer.plot_time_analysis(all_results)
+
+    # Generate and save markdown report
+    report = visualizer.generate_summary_report(all_results)
+    report_file = os.path.join(output_dir, 'BENCHMARK_REPORT.md')
+    with open(report_file, 'w') as f:
+        f.write(report)
 
     print(f"\nVisualizations saved to: {output_dir}")
+    print(f"Summary report: {report_file}")
 
     return all_results
 

@@ -1,168 +1,349 @@
 # MEP: Muon Equilibrium Propagation
-### 🧠 Biologically Plausible, Infinite-Depth Learning
 
-![MEP Architecture](https://raw.githubusercontent.com/your-username/mep/main/docs/assets/mep_banner.png)
+### 🧠 Biologically Plausible Deep Learning Without Backpropagation
 
-**SDMEP** is a PyTorch-based optimization framework that provides robust training methods for deep neural networks. It implements two primary modes of operation:
-1.  **Standard Backpropagation** enhanced with **Muon** (Newton-Schulz) and **Dion** (Low-Rank SVD) geometry-aware updates.
-2.  **Equilibrium Propagation (EP)**, a biology-inspired gradient estimation method that theoretically avoids the need for global error backpropagation.
-
-This repository serves as a research platform for **Biologically Plausible Learning**, implementing continuous-time dynamics and local learning rules using PyTorch's autograd engine for efficient execution. By combining **Spectral Normalization**, the **Muon** optimizer, and **Dion** low-rank updates, SDMEP solves historic instability issues of Energy-Based Models (EBMs), enabling deep scaling experiments relevant to neuromorphic and analog hardware.
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://github.com/your-username/mep/actions/workflows/tests.yml/badge.svg)](https://github.com/your-username/mep)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 ---
 
-## 🌟 Key Features
+## 📄 Abstract
 
-1.  **O(1) Memory Cost:** Memory usage does not grow with network depth. Train 1,000-layer networks with the memory of a single layer.
-2.  **Biological Plausibility:** Local (Hebbian) updates. Neurons only need information from their neighbors.
-3.  **Unbreakable Stability:** Unlike traditional EP, SDMEP enforces a strict **Spectral Constraint ($\sigma(W) \le \gamma < 1$)**, guaranteeing convergence to a unique fixed point.
-4.  **Hardware Native:** Ready for optical chips, analog arrays, and FPGA clusters.
+**Equilibrium Propagation (EP)** offers a biologically plausible alternative to backpropagation by estimating gradients through the contrast between two equilibrium states of an energy-based model. However, historical implementations have suffered from training instability, poor convergence, and impractical computational requirements—preventing EP from scaling to modern deep learning tasks.
+
+We present **Spectral Dion-Muon Equilibrium Propagation (SDMEP)**, a refactored optimization framework that addresses these limitations through three key innovations:
+
+1.  **Spectral Constraints (S):** Enforcing σ(W) ≤ γ < 1 guarantees convergence to a unique fixed point, eliminating the oscillatory divergence that plagued earlier EP implementations.
+2.  **Dion Low-Rank Updates (D):** For large weight matrices, low-rank SVD with error feedback reduces computational cost while preserving gradient information in the dominant subspace.
+3.  **Muon Orthogonalization (M):** Newton-Schulz iteration orthogonalizes gradients, improving conditioning and enabling stable training at greater depths.
+
+This framework is designed as a research platform for exploring biologically plausible learning, neuromorphic computing, continual learning, and energy-efficient deep learning on analog hardware.
+
+**Keywords:** Equilibrium Propagation, Biologically Plausible Learning, Energy-Based Models, Spectral Normalization, Low-Rank Optimization, Neuromorphic Computing, Continual Learning
 
 ---
 
-## 🔧 Installation
+## 📋 Table of Contents
 
-Install MEP via pip:
+- [Abstract](#-abstract)
+- [Introduction](#-introduction-the-backpropagation-bottleneck)
+- [The MEP Framework](#-the-mep-framework)
+- [Quick Start](#-quick-start)
+- [Optimizer Selection Guide](#-optimizer-selection-guide)
+- [Architecture: Strategy Pattern](#-architecture-strategy-pattern)
+- [Understanding EP](#-understanding-ep-a-visual-guide)
+- [References](#-references)
 
-```bash
-pip install mep
+---
+
+## 🌍 Introduction: The Backpropagation Bottleneck
+
+Backpropagation has powered the deep learning revolution, but it faces fundamental limitations:
+
+| Problem | Why It Matters |
+|---------|----------------|
+| **Biological Implausibility** | Requires symmetric forward/backward weights ("weight transport problem") and global error signals—neither observed in biological neural circuits. |
+| **Memory Scaling** | Activation storage grows linearly with depth, limiting training of very deep networks on memory-constrained hardware. |
+| **Hardware Mismatch** | Digital backpropagation is energy-inefficient on emerging analog/neuromorphic substrates (optical chips, memristor arrays). |
+
+**Equilibrium Propagation** (Scellier & Bengio, 2017) addresses these issues by:
+- Using only **local Hebbian updates** derived from an energy function
+- Achieving **O(1) memory cost** independent of network depth
+- Mapping naturally to **continuous-time dynamics** in analog hardware
+
+However, vanilla EP is notoriously unstable. **SDMEP** provides the "safety harness" that makes EP practical for deep learning research.
+
+---
+
+## 🔬 The MEP Framework
+
+### Theoretical Foundation
+
+MEP is built on the theory of **Energy Based Models (EBMs)** with contractive dynamics. Given an input x and network states s = {s₁, ..., sₗ}, we define the energy:
+
+```
+E(x, s, y) = E_internal + E_external
+
+E_internal = 0.5 × Σ ||sᵢ - fᵢ(sᵢ₋₁)||²     (state consistency)
+E_external = β × L(s_last, y)                (task loss)
 ```
 
-Or install from source for development:
+**Free phase** (β = 0): States settle to minimize E_internal, reaching a fixed point s*.
 
-```bash
-git clone https://github.com/your-username/mep.git
-cd mep
-pip install .
-```
+**Nudged phase** (β > 0): The target y perturbs the energy landscape, yielding a new fixed point s^β.
+
+**EP Gradient:** The contrast (s^β - s*) / β approximates ∂L/∂W without backpropagation.
+
+### The Safety Harness: S-D-M
+
+| Component | Purpose | Mechanism |
+|-----------|---------|-----------|
+| **Spectral (S)** | Stability | Power iteration enforces σ(W) ≤ γ, ensuring contractive dynamics and unique fixed points. |
+| **Dion (D)** | Efficiency | Low-rank SVD (U Σ V^T) with error feedback for matrices >100K parameters. |
+| **Muon (M)** | Conditioning | Newton-Schulz iteration orthogonalizes gradients: X_{k+1} = ½ X_k (3I - X_k^T X_k). |
 
 ---
 
-## 🚀 Quick Start
+## 🔧 Quick Start
 
-### 1. Define Model
-Use any standard PyTorch model (e.g., `nn.Sequential`, ResNet, Transformer).
+### Installation
+
+```bash
+pip install -e .
+```
+
+### Basic Usage
 
 ```python
 import torch.nn as nn
-from mep.optimizers import SMEPOptimizer
+from mep import smep, sdmep, muon_backprop
 
 model = nn.Sequential(
-    nn.Linear(784, 1000),
+    nn.Linear(784, 256),
     nn.ReLU(),
-    nn.Linear(1000, 10)
+    nn.Linear(256, 10)
 )
-```
 
-### 2. Choose an Optimizer Mode
+# Option 1: EP mode (biologically plausible)
+optimizer = smep(model.parameters(), model=model, mode='ep')
+optimizer.step(x=x, target=y)  # No .backward() needed!
 
-**Option 1: Standard Backprop (Muon updates only)**
-```python
-optimizer = SMEPOptimizer(model.parameters(), lr=0.01, mode='backprop')
-
-# Standard training loop
-x, y = next(dataloader)
-optimizer.zero_grad()
-output = model(x)
-loss = criterion(output, y)
+# Option 2: Backprop mode (drop-in SGD replacement)
+optimizer = muon_backprop(model.parameters())
 loss.backward()
-optimizer.step()  #  Applies Muon (Newton-Schulz) updates
+optimizer.step()
 ```
 
-**Option 2: Equilibrium Propagation (Biology-inspired gradients)**
-
-**New API (Recommended):**
-```python
-optimizer = SMEPOptimizer(
-    model.parameters(), 
-    model=model,      # Pass model once
-    lr=0.01, 
-    mode='ep',        # Enable EP gradient computation
-    beta=0.5,        # Nudge strength
-    settle_steps=20  # Settling iterations
-)
-
-# EP workflow - no .backward() needed!
-x, y = next(dataloader)
-optimizer.zero_grad()
-output = model(x)             # Automatic free-phase settling
-optimizer.step(target=y)      # Nudged phase + updates
-```
-
-**Legacy API:**
-```python
-optimizer = SMEPOptimizer(model.parameters(), lr=0.01, mode='ep')
-optimizer.step(x=x, target=y, model=model)
-```
-
-### Advanced Features (SMEP & SDMEP)
-
-Enable **Spectral Constraints** (Lipschitz control) and **Error Feedback** (for continual learning) directly in `SMEPOptimizer`:
+### Recommended Configuration
 
 ```python
-optimizer = SMEPOptimizer(
+from mep import smep
+
+# For classification
+optimizer = smep(
     model.parameters(),
-    lr=0.02,
-    use_spectral_constraint=True,  # Constrain spectral norm < gamma
+    model=model,
+    lr=0.01,
+    mode='ep',
+    beta=0.5,
+    settle_steps=10,
+    settle_lr=0.05,
+    loss_type='mse',
+    use_error_feedback=False,  # Critical for stability
+    ns_steps=5,
     gamma=0.95,
-    use_error_feedback=True        # Accumulate update residuals
+)
+
+# For continual learning
+optimizer = smep(
+    model.parameters(),
+    model=model,
+    lr=0.01,
+    mode='ep',
+    beta=0.5,
+    settle_steps=10,
+    settle_lr=0.05,
+    loss_type='mse',
+    use_error_feedback=True,   # Enables memory retention
+    error_beta=0.95,           # High retention
 )
 ```
 
-Use `SDMEPOptimizer` for **Dion-Muon hybrid updates** (Low-Rank SVD for large layers, Newton-Schulz for small ones):
+---
+
+## 🎯 Optimizer Selection Guide
+
+| Use Case | Recommended | Configuration Notes |
+|----------|-------------|---------------------|
+| Standard classification | **Adam/SGD** | Default settings |
+| Biological plausibility research | **SMEP** | `use_error_feedback=False` |
+| Continual/lifelong learning | **SMEP+EF** | `use_error_feedback=True, error_beta=0.95` |
+| Memory-constrained (deep nets) | **EP** | O(1) memory vs O(depth) for backprop |
+| Neuromorphic hardware | **SMEP/LocalEP** | Local learning rules |
+| Very deep networks | **Muon** | Backprop + orthogonalization |
+| Large models (>1M params/layer) | **SDMEP** | `dion_thresh=200000` |
+
+### Key Observations from Benchmarking
+
+- **Classification**: EP-based methods show competitive performance with careful hyperparameter tuning
+- **Continual Learning**: Error feedback dramatically reduces catastrophic forgetting
+- **Regression**: EP shows instability despite natural MSE alignment—an open research problem
+- **Speed**: EP is ~3× slower than backprop due to settling iterations
+
+---
+
+## 🏗️ Architecture: Strategy Pattern
+
+The refactored MEP uses a **strategy pattern** for maximum flexibility and extensibility:
+
+```
+CompositeOptimizer
+├── GradientStrategy    (how to compute ∇L)
+│   ├── BackpropGradient    # Standard .backward()
+│   ├── EPGradient          # Free/nudged phase contrast
+│   ├── LocalEPGradient     # Layer-local updates only
+│   └── NaturalGradient     # Fisher Information whitening
+├── UpdateStrategy      (how to transform ∇L → ΔW)
+│   ├── PlainUpdate         # Vanilla SGD
+│   ├── MuonUpdate          # Newton-Schulz orthogonalization
+│   ├── DionUpdate          # Low-rank SVD for large matrices
+│   └── FisherUpdate        # Natural gradient descent
+├── ConstraintStrategy  (how to enforce constraints)
+│   ├── NoConstraint        # Unconstrained
+│   └── SpectralConstraint  # σ(W) ≤ γ
+└── FeedbackStrategy    (how to accumulate residuals)
+    ├── NoFeedback          # Standard optimization
+    └── ErrorFeedback       # Accumulate residuals (continual learning)
+```
+
+### Custom Composition
 
 ```python
-from mep.optimizers import SDMEPOptimizer
-optimizer = SDMEPOptimizer(
+from mep.optimizers import (
+    CompositeOptimizer,
+    EPGradient, MuonUpdate, SpectralConstraint, ErrorFeedback
+)
+
+# Custom optimizer for continual learning
+optimizer = CompositeOptimizer(
     model.parameters(),
-    rank_frac=0.2,   # Use top 20% singular values
-    dion_thresh=1e5  # Use Dion if params > 100k
+    gradient=EPGradient(beta=0.5, settle_steps=10),
+    update=MuonUpdate(ns_steps=5),
+    constraint=SpectralConstraint(gamma=0.95),
+    feedback=ErrorFeedback(beta=0.95),
+    lr=0.01,
+    model=model,
 )
 ```
 
----
+### Debugging with EPMonitor
 
-## 📊 Benchmarks
+```python
+from mep import smep, EPMonitor
 
-Compare SMEP (mode='ep') against standard optimizers on MNIST:
+monitor = EPMonitor()
+optimizer = smep(model.parameters(), model=model, mode='ep')
 
-```bash
-python -m mep.benchmarks.runner \
-  --config mep/benchmarks/config/mnist.yaml \
-  --baselines smep sdmep sgd \
-  --output benchmarks/results/mnist_comparison
+for epoch in range(epochs):
+    monitor.start_epoch()
+    
+    for x, y in train_loader:
+        optimizer.step(x=x, target=y)
+    
+    metrics = monitor.end_epoch(model, optimizer)
+    print(f"Epoch {epoch}: Energy gap = {metrics.energy_gap:.4f}")
+    
+    if not monitor.check_convergence():
+        print("Warning: Settling may not have converged!")
+
+print(monitor.summary())
 ```
 
-Results (plots and logs) will be saved to `benchmarks/results/`. Performance reports are in `PERFORMANCE.md`.
+---
+
+## 🔮 Understanding EP: A Visual Guide
+
+### Free Phase vs Nudged Phase
+
+```
+Free Phase (β = 0):
+Input → [Layer 1] → [Layer 2] → [Layer 3] → Output
+         │  ▲        │  ▲        │  ▲
+         │  │        │  │        │  │
+         └──┴────────┴──┴────────┴──┘
+              States settle to minimize E_internal
+
+Nudged Phase (β > 0):
+Input → [Layer 1] → [Layer 2] → [Layer 3] → Output
+         │  ▲        │  ▲        │  ▲         │
+         │  │        │  │        │  │         │ (target nudges)
+         └──┴────────┴──┴────────┴──┴─────────┘
+              Target perturbs energy landscape
+
+EP Gradient = (nudged_states - free_states) / β
+```
+
+### Energy Function
+
+```
+E = E_internal + E_external
+
+E_internal = 0.5 × Σ ||sᵢ - fᵢ(sᵢ₋₁)||²   (state consistency)
+E_external = β × L(s_last, y)             (task loss)
+
+For classification with MSE:
+  L = ||s_last - one_hot(y)||²
+
+For classification with CrossEntropy:
+  L = CrossEntropy(softmax(s_last), y)
+```
 
 ---
 
-## 🔮 Roadmap
+## 📚 References
 
-*   [x] **Foundation:** `pyproject.toml`, packaging, CI/CD setup.
-*   [x] **Testing:** >85% coverage, numerical gradient verification.
-*   [x] **Benchmarks:** Framework for comparing Optimizers/Models.
-*   [x] **Robustness:** Type hints, input validation, NaN checks.
-*   [ ] **Dion CUDA Kernel:** Custom C++ extension for acceleration.
-*   [ ] **Convolutional Layers:** Extending `EPNetwork` for CNNs.
-*   [ ] **LLM Scaling:** Testing SDMEP on Transformer blocks.
+1.  Scellier, B., & Bengio, Y. (2017). Equilibrium Propagation: Bridging the Gap Between Energy-Based Models and Backpropagation. *Frontiers in Computational Neuroscience*, 11, 24.
+
+2.  Jordan, K. (2024). The Muon Optimizer. *GitHub Repository*. https://github.com/KellerJordan/Muon
+
+3.  Miyato, T., Kataoka, T., Koyama, M., & Yoshida, Y. (2018). Spectral Normalization for Generative Adversarial Networks. *ICLR*.
+
+4.  Scellier, B., Franceschi, L., & Bengio, Y. (2024). Energy-Based Learning in Continuous Time. *arXiv preprint*.
+
+5.  Lillicrap, T. P., Santoro, A., Marris, L., Akerman, C. J., & Hinton, G. (2020). Backpropagation and the Brain. *Nature Reviews Neuroscience*, 21(6), 335-346.
+
+6.  Goodfellow, I., Bengio, Y., & Courville, A. (2016). *Deep Learning*. MIT Press.
+
+7.  Kirkpatrick, J., et al. (2017). Overcoming Catastrophic Forgetting in Neural Networks. *PNAS*, 114(13), 3521-3526.
+
+---
+
+## 📁 Module Structure
+
+```
+mep/
+├── optimizers/
+│   ├── composite.py       # Main CompositeOptimizer
+│   ├── strategies/
+│   │   ├── gradient.py    # Backprop, EP, LocalEP, Natural
+│   │   ├── update.py      # Muon, Dion, Fisher
+│   │   ├── constraint.py  # Spectral norm
+│   │   └── feedback.py    # Error feedback
+│   ├── energy.py          # Energy function
+│   ├── settling.py        # Settling dynamics
+│   ├── monitor.py         # EP debugging utilities
+│   └── inspector.py       # Model structure extraction
+├── presets/
+│   └── __init__.py        # Factory functions (smep, sdmep, etc.)
+├── benchmarks/
+│   ├── tuned_compare.py   # Classification benchmarks
+│   └── niche_benchmarks.py # Regression, continual learning
+├── cuda/
+│   └── kernels.py         # CUDA-accelerated operations
+└── optimizers_legacy.py   # Archived original implementation
+```
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please read `CONTRIBUTING.md` (coming soon) and run tests before submitting a PR.
+Contributions welcome! High-priority areas:
+
+1.  **Fix regression instability** - EP should excel here
+2.  **Adaptive settling** - Early stopping for speedup
+3.  **SDMEP tuning** - Better rank selection for large models
+4.  **Continual learning benchmarks** - More task sequences, domains
+5.  **Hardware demos** - Neuromorphic chip implementations
 
 ```bash
-# Run tests
+# Development setup
+pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-## 📜 License
-
-MIT License. See `LICENSE` for details.
-
 ---
 
-*Cite this work:*
-> *Spectral Dion-Muon Equilibrium Propagation (SDMEP): A robust, scalable, and biologically plausible optimization framework.* (2025)
+## 📄 License
+
+MIT License. See [LICENSE](LICENSE) for details.

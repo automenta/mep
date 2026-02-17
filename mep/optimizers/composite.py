@@ -1,0 +1,245 @@
+"""
+Composite Optimizer: Strategy pattern-based optimizer.
+
+This module provides the main optimizer class that composes
+various strategies for gradient computation, update transformation,
+constraints, and error feedback.
+"""
+
+import torch
+import torch.nn as nn
+from torch.optim import Optimizer
+from typing import Optional, Callable, Any, Iterable, List, Dict
+
+from .strategies import (
+    GradientStrategy,
+    UpdateStrategy,
+    ConstraintStrategy,
+    FeedbackStrategy,
+    NoConstraint,
+    NoFeedback,
+)
+from .energy import EnergyFunction
+from .inspector import ModelInspector
+from .settling import Settler
+
+
+class CompositeOptimizer(Optimizer):
+    """
+    Composable optimizer built from strategy components.
+    
+    Example usage:
+        optimizer = CompositeOptimizer(
+            model.parameters(),
+            gradient=EPGradient(beta=0.5, settle_steps=20),
+            update=MuonUpdate(ns_steps=5),
+            constraint=SpectralConstraint(gamma=0.95),
+            feedback=ErrorFeedback(beta=0.9),
+            lr=0.02,
+            model=model,
+        )
+    
+    Attributes:
+        model: The model being optimized (for EP).
+        gradient: Strategy for computing gradients.
+        update: Strategy for transforming gradients.
+        constraint: Strategy for enforcing constraints.
+        feedback: Strategy for error accumulation.
+    """
+    
+    def __init__(
+        self,
+        params: Iterable[nn.Parameter],
+        gradient: GradientStrategy,
+        update: UpdateStrategy,
+        constraint: Optional[ConstraintStrategy] = None,
+        feedback: Optional[FeedbackStrategy] = None,
+        lr: float = 0.02,
+        momentum: float = 0.9,
+        weight_decay: float = 0.0005,
+        model: Optional[nn.Module] = None,
+        max_grad_norm: float = 10.0,
+    ):
+        """
+        Initialize composite optimizer.
+        
+        Args:
+            params: Iterable of parameters to optimize.
+            gradient: Strategy for computing gradients.
+            update: Strategy for transforming gradients to updates.
+            constraint: Strategy for enforcing constraints (default: none).
+            feedback: Strategy for error feedback (default: none).
+            lr: Learning rate.
+            momentum: Momentum factor.
+            weight_decay: Weight decay coefficient.
+            model: Model instance (required for EP gradient strategies).
+            max_grad_norm: Maximum gradient norm for clipping.
+        """
+        # Validate
+        if lr <= 0:
+            raise ValueError(f"Learning rate must be positive, got {lr}")
+        if not (0 <= momentum < 1):
+            raise ValueError(f"Momentum must be in [0, 1), got {momentum}")
+        if weight_decay < 0:
+            raise ValueError(f"Weight decay must be non-negative, got {weight_decay}")
+        
+        defaults: Dict[str, Any] = dict(
+            lr=lr,
+            momentum=momentum,
+            weight_decay=weight_decay,
+            max_grad_norm=max_grad_norm,
+        )
+        super().__init__(params, defaults)
+        
+        self.model = model
+        self.gradient = gradient
+        self.update = update
+        self.constraint = constraint or NoConstraint()
+        self.feedback = feedback or NoFeedback()
+
+        # Utilities
+        self._inspector = ModelInspector()
+        
+        # Get loss_type from gradient strategy if available
+        loss_type = getattr(gradient, 'loss_type', 'mse')
+        softmax_temperature = getattr(gradient, 'softmax_temperature', 1.0)
+        self._energy_fn = EnergyFunction(
+            loss_type=loss_type,
+            softmax_temperature=softmax_temperature
+        )
+        
+        # Cache for EP states (when using wrapped model)
+        self._free_states: Optional[List[torch.Tensor]] = None
+        self._nudged_states: Optional[List[torch.Tensor]] = None
+        self._last_input: Optional[torch.Tensor] = None
+
+    def step(
+        self,
+        closure: Optional[Callable[[], float]] = None,
+        x: Optional[torch.Tensor] = None,
+        target: Optional[torch.Tensor] = None,
+        **kwargs: Any
+    ) -> Optional[float]:
+        """
+        Perform optimization step.
+
+        Supports multiple calling conventions:
+
+        1. Backprop mode:
+            loss.backward()
+            optimizer.step()
+
+        2. EP mode with explicit arguments:
+            optimizer.step(x=x, target=y)
+
+        3. EP mode with wrapped model:
+            output = model(x)  # Triggers free phase
+            optimizer.step(target=y)  # Triggers nudged phase
+
+        Args:
+            closure: Optional closure for re-evaluating loss.
+            x: Input tensor (required for EP mode).
+            target: Target tensor (required for EP mode).
+            **kwargs: Additional arguments passed to strategies.
+
+        Returns:
+            Loss value if closure provided, None otherwise.
+
+        Raises:
+            ValueError: If required arguments missing for EP mode.
+        """
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        # Handle EP gradient computation (needs gradients enabled)
+        if isinstance(self.gradient, (EPGradient, LocalEPGradient, NaturalGradient)):
+            if x is None and self._last_input is None:
+                raise ValueError(
+                    "EP gradient strategies require x tensor. "
+                    "Pass x to step() or call model(x) first."
+                )
+
+            if target is None:
+                raise ValueError("EP gradient strategies require target tensor")
+
+            # Get input
+            x_input = x if x is not None else self._last_input
+
+            # Compute gradients (this needs gradients enabled)
+            self.gradient.compute_gradients(
+                self.model,
+                x_input,
+                target,
+                energy_fn=self._energy_fn,
+                structure_fn=self._inspector.inspect,
+                **kwargs
+            )
+
+        # Apply updates (no gradients needed here)
+        with torch.no_grad():
+            for group in self.param_groups:
+                for param in group["params"]:
+                    if param.grad is None:
+                        continue
+
+                    state = self.state[param]
+
+                    # Initialize momentum buffer
+                    if "momentum_buffer" not in state:
+                        state["momentum_buffer"] = torch.zeros_like(param)
+
+                    # Error feedback
+                    g_aug = self.feedback.accumulate(param.grad, state, group)
+
+                    # Transform gradient
+                    update = self.update.transform_gradient(param, g_aug, state, group)
+
+                    # Update error buffer
+                    if isinstance(self.feedback, ErrorFeedback):
+                        residual = g_aug - update
+                        self.feedback.update_buffer(residual, state, group)
+
+                    # Momentum
+                    buf = state["momentum_buffer"]
+                    buf.mul_(group["momentum"]).add_(update)
+
+                    # Weight decay + apply update
+                    param.data.mul_(1 - group["weight_decay"] * group["lr"])
+                    param.data.add_(buf, alpha=-group["lr"])
+
+                    # Constraint
+                    self.constraint.enforce(param, state, group)
+
+        return loss
+    
+    def zero_grad(self, set_to_none: bool = True) -> None:
+        """
+        Clear gradients.
+        
+        Args:
+            set_to_none: If True, set grads to None (more memory efficient).
+        """
+        for p in self.param_groups[0]["params"] if self.param_groups else []:
+            if p.grad is not None:
+                if set_to_none:
+                    p.grad = None
+                else:
+                    p.grad.zero_()
+    
+    def state_dict(self) -> Dict[str, Any]:
+        """Get optimizer state dict."""
+        state = super().state_dict()
+        state["strategy_config"] = {
+            "gradient": type(self.gradient).__name__,
+            "update": type(self.update).__name__,
+            "constraint": type(self.constraint).__name__,
+            "feedback": type(self.feedback).__name__,
+        }
+        return state
+
+
+# Import after class definition to avoid circular imports
+from .strategies.gradient import EPGradient, LocalEPGradient, NaturalGradient
+from .strategies.feedback import ErrorFeedback

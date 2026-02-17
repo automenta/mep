@@ -15,6 +15,8 @@ Quick Start:
     optimizer = muon_backprop(model.parameters())
     loss.backward()
     optimizer.step()
+
+See NICHES.md for optimizer selection guide.
 """
 
 from .optimizers import (
@@ -36,6 +38,7 @@ from .optimizers import (
     Settler,
     ModelInspector,
 )
+from .optimizers.monitor import EPMonitor, monitor_ep_training
 from .presets import smep, sdmep, local_ep, natural_ep, muon_backprop
 
 __version__ = "0.3.0"
@@ -59,6 +62,8 @@ __all__ = [
     "EnergyFunction",
     "Settler",
     "ModelInspector",
+    "EPMonitor",
+    "monitor_ep_training",
     # Preset factories
     "smep",
     "sdmep",

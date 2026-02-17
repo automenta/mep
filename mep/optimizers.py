@@ -11,6 +11,18 @@ import torch.nn.functional as F
 from torch.optim import Optimizer
 from typing import Optional, Tuple, List, Iterable, Dict, Any, Callable
 
+# Import CUDA kernels for accelerated operations
+try:
+    from .cuda.kernels import (
+        newton_schulz_cuda,
+        dion_update_cuda,
+        spectral_norm_power_iteration_cuda,
+        enforce_spectral_constraint_cuda,
+    )
+    CUDA_AVAILABLE = True
+except ImportError:
+    CUDA_AVAILABLE = False
+
 # Type aliases
 TensorOrNone = Optional[torch.Tensor]
 ModuleOrNone = Optional[nn.Module]
@@ -132,6 +144,7 @@ class SMEPOptimizer(Optimizer):
         spectral_timing: str = "post_update",
         spectral_lambda: float = 1.0,
         loss_type: str = "mse",
+        softmax_temperature: float = 1.0,
     ) -> None:
         """
         Initialize SMEPOptimizer.
@@ -153,6 +166,8 @@ class SMEPOptimizer(Optimizer):
             gamma: Spectral norm bound. Must be in (0, 1].
             spectral_timing: 'post_update', 'during_settling', or 'both'.
             spectral_lambda: Strength of spectral penalty during settling.
+            loss_type: 'mse' for regression or 'cross_entropy' for classification.
+            softmax_temperature: Temperature for softmax in classification (lower = sharper).
 
         Raises:
             ValueError: If any parameter validation fails.
@@ -189,6 +204,7 @@ class SMEPOptimizer(Optimizer):
             spectral_timing=spectral_timing,
             spectral_lambda=spectral_lambda,
             loss_type=loss_type,
+            softmax_temperature=softmax_temperature,
         )
         super().__init__(params, defaults)
 
@@ -265,6 +281,8 @@ class SMEPOptimizer(Optimizer):
         """
         Newton-Schulz orthogonalization (Muon update).
 
+        Uses CUDA-accelerated implementation when available.
+
         Args:
             G: Gradient tensor (must be 2D for orthogonalization).
             steps: Number of Newton-Schulz iterations.
@@ -277,6 +295,12 @@ class SMEPOptimizer(Optimizer):
         """
         if G.ndim != 2:
             return G
+
+        # Use CUDA kernel if available and on GPU
+        if CUDA_AVAILABLE and G.is_cuda:
+            return newton_schulz_cuda(G, steps=steps, epsilon=self.EPSILON_NORM)
+
+        # Fallback to CPU implementation
         r, c = G.shape
 
         # Handle rectangular matrices by transposing if needed
@@ -319,6 +343,8 @@ class SMEPOptimizer(Optimizer):
         """
         Compute spectral norm via power iteration.
 
+        Uses CUDA-accelerated implementation when available.
+
         Args:
             W: Weight matrix.
             u: Left singular vector (cached).
@@ -331,6 +357,13 @@ class SMEPOptimizer(Optimizer):
         if iter is None:
             iter = self.SPECTRAL_POWER_ITER
 
+        # Use CUDA kernel if available and on GPU
+        if CUDA_AVAILABLE and W.is_cuda:
+            return spectral_norm_power_iteration_cuda(
+                W, u, v, niter=iter, epsilon=self.EPSILON_SPECTRAL
+            )
+
+        # Fallback to CPU implementation
         if W.ndim > 2:
             W = W.view(W.shape[0], -1)
 
@@ -384,6 +417,13 @@ class SMEPOptimizer(Optimizer):
         """
         Extract sequence of layers and activations (cached).
 
+        Supports:
+        - Linear layers (nn.Linear)
+        - Convolutional layers (nn.Conv1d, nn.Conv2d, nn.Conv3d)
+        - Transformer layers (nn.MultiheadAttention, nn.TransformerEncoderLayer)
+        - Normalization layers (nn.LayerNorm, nn.BatchNorm*)
+        - Activations (nn.ReLU, nn.GELU, etc.)
+
         Args:
             model: Neural network to inspect.
 
@@ -396,8 +436,17 @@ class SMEPOptimizer(Optimizer):
 
         structure: Structure = []
         for m in model.modules():
-            if isinstance(m, (nn.Linear, nn.Conv2d)):
+            # Convolutional layers
+            if isinstance(m, (nn.Linear, nn.Conv1d, nn.Conv2d, nn.Conv3d)):
                 structure.append({"type": "layer", "module": m})
+            # Transformer attention
+            elif isinstance(m, nn.MultiheadAttention):
+                structure.append({"type": "attention", "module": m})
+            # Normalization layers (track but don't treat as full layers)
+            elif isinstance(m, (nn.LayerNorm, nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d,
+                               nn.GroupNorm, nn.InstanceNorm1d, nn.InstanceNorm2d, nn.InstanceNorm3d)):
+                structure.append({"type": "norm", "module": m})
+            # Activations and other non-linearities
             elif isinstance(
                 m,
                 (
@@ -410,9 +459,19 @@ class SMEPOptimizer(Optimizer):
                     nn.Dropout,
                     nn.GELU,
                     nn.SiLU,
+                    nn.ELU,
+                    nn.CELU,
+                    nn.GLU,
+                    nn.Hardswish,
+                    nn.Mish,
                 ),
             ):
                 structure.append({"type": "act", "module": m})
+            # Pooling layers
+            elif isinstance(m, (nn.MaxPool1d, nn.MaxPool2d, nn.MaxPool3d,
+                               nn.AvgPool1d, nn.AvgPool2d, nn.AvgPool3d,
+                               nn.AdaptiveAvgPool2d, nn.AdaptiveAvgPool1d)):
+                structure.append({"type": "pool", "module": m})
 
         self._model_structure_cache[model_id] = structure
         return structure
@@ -431,6 +490,11 @@ class SMEPOptimizer(Optimizer):
 
         E_int = 0.5 * mean_over_batch sum_over_features || s_i - f_i(s_{i-1}) ||^2
         E_ext = beta * Loss(s_last, target)
+
+        For CrossEntropy loss, the internal energy uses a softmax-aware formulation:
+        - Hidden layers: standard MSE settling
+        - Output layer: KL divergence between softmax(state) and softmax(prediction)
+          This better matches the geometry of classification problems.
 
         Note: Energy is normalized by batch size to ensure batch-size invariance.
 
@@ -452,40 +516,97 @@ class SMEPOptimizer(Optimizer):
         if batch_size == 0:
             raise ValueError(f"Batch size cannot be zero, got input shape {x.shape}")
 
+        loss_type = self.defaults.get("loss_type", "mse")
+        use_classification = loss_type == "cross_entropy"
+        softmax_temp = self.defaults.get("softmax_temperature", 1.0)
+
         E = torch.tensor(0.0, device=x.device, dtype=x.dtype)
         prev = x
         state_idx = 0
 
+        # Identify the last layer for special handling in classification
+        layer_modules = [item["module"] for item in structure if item["type"] == "layer"]
+        last_layer_idx = len(layer_modules) - 1
+
         # Iterate through structure to reconstruct graph
         for item in structure:
-            if item["type"] == "layer":
+            item_type = item["type"]
+            module = item["module"]
+
+            if item_type == "layer":
                 if state_idx >= len(states):
                     break
 
-                module = item["module"]
                 state = states[state_idx]
+                is_last_layer = (state_idx == last_layer_idx)
 
                 # Prediction from previous state
                 h = module(prev)
 
-                # Energy mismatch (mean over batch for stability)
-                E = E + 0.5 * F.mse_loss(h, state, reduction="sum") / batch_size
+                # Energy mismatch computation
+                if use_classification and is_last_layer:
+                    # For classification output layer: use KL divergence on softmax
+                    # This matches the CrossEntropy geometry better than raw MSE
+                    eps = 1e-8
+                    state_softmax = F.softmax(state / softmax_temp + eps, dim=-1)
+                    h_softmax = F.softmax(h / softmax_temp + eps, dim=-1)
+                    kl_div = F.kl_div(
+                        torch.log(h_softmax + eps), state_softmax, reduction="sum"
+                    )
+                    E = E + kl_div / batch_size
+                else:
+                    # Standard MSE for hidden layers or regression
+                    E = E + 0.5 * F.mse_loss(h, state, reduction="sum") / batch_size
 
                 # Next input base is current state
                 prev = state
                 state_idx += 1
 
-            elif item["type"] == "act":
+            elif item_type == "norm":
+                # Normalization layers: apply to current flow
+                # These don't have learnable states in the EP sense
+                prev = module(prev)
+
+            elif item_type == "pool":
+                # Pooling layers: apply to current flow
+                prev = module(prev)
+
+            elif item_type == "attention":
+                # Multihead attention: treat as a layer for state tracking
+                if state_idx >= len(states):
+                    break
+
+                state = states[state_idx]
+
+                # For attention, we need to handle the multi-output case
+                # module returns (attn_output, attn_weights) or just attn_output
+                if isinstance(module, nn.MultiheadAttention):
+                    # Self-attention with same Q=K=V=prev
+                    # need_weights=False returns just the output
+                    try:
+                        h = module(prev, prev, prev, need_weights=False)[0]
+                    except (RuntimeError, AssertionError):
+                        # Fallback: skip attention energy for this step
+                        prev = state
+                        state_idx += 1
+                        continue
+                else:
+                    h = module(prev)
+
+                # MSE energy for attention states
+                E = E + 0.5 * F.mse_loss(h, state, reduction="sum") / batch_size
+                prev = h
+                state_idx += 1
+
+            elif item_type == "act":
                 # Apply activation to current flow
-                prev = item["module"](prev)
+                prev = module(prev)
 
         # Nudge term (consistent reduction with E_int)
         if target_vec is not None and beta > 0:
             output = prev
-            loss_type = self.defaults.get("loss_type", "mse")
             if loss_type == "cross_entropy":
                 # For classification: target_vec contains class indices (Long)
-                # target_vec is already prepared by _prepare_target
                 E = E + beta * F.cross_entropy(output, target_vec, reduction="sum") / batch_size
             else:
                 # MSE for regression
@@ -543,10 +664,15 @@ class SMEPOptimizer(Optimizer):
         handles: List[Any] = []
 
         def capture_hook(module: nn.Module, input: Any, output: torch.Tensor) -> None:
-            states.append(output.detach().clone().requires_grad_(True))
+            # Handle tuple outputs (e.g., from MultiheadAttention)
+            if isinstance(output, tuple):
+                states.append(output[0].detach().clone().requires_grad_(True))
+            else:
+                states.append(output.detach().clone().requires_grad_(True))
 
         for item in structure:
-            if item["type"] == "layer":
+            # Capture states for layers and attention modules
+            if item["type"] in ("layer", "attention"):
                 handles.append(item["module"].register_forward_hook(capture_hook))
 
         try:
@@ -1005,6 +1131,8 @@ class SDMEPOptimizer(SMEPOptimizer):
         ns_steps: int = 5,
         use_error_feedback: bool = True,
         use_spectral_constraint: bool = True,
+        loss_type: str = "mse",
+        softmax_temperature: float = 1.0,
     ) -> None:
         """
         Initialize SDMEPOptimizer.
@@ -1026,6 +1154,8 @@ class SDMEPOptimizer(SMEPOptimizer):
             ns_steps: Newton-Schulz iterations.
             use_error_feedback: Enable error feedback.
             use_spectral_constraint: Enable spectral constraint.
+            loss_type: 'mse' for regression or 'cross_entropy' for classification.
+            softmax_temperature: Temperature for softmax in classification.
         """
         # Validate Dion-specific parameters
         if not (0 < rank_frac <= 1):
@@ -1049,6 +1179,8 @@ class SDMEPOptimizer(SMEPOptimizer):
             error_beta=error_beta,
             use_spectral_constraint=use_spectral_constraint,
             gamma=gamma,
+            loss_type=loss_type,
+            softmax_temperature=softmax_temperature,
         )
 
         # Add SDMEP-specific parameters to defaults
@@ -1067,6 +1199,8 @@ class SDMEPOptimizer(SMEPOptimizer):
     ) -> torch.Tensor:
         """
         Override: Use Dion for large matrices, Muon for small ones.
+
+        Uses CUDA-accelerated SVD when available.
 
         Args:
             p: Parameter tensor.
@@ -1087,16 +1221,32 @@ class SDMEPOptimizer(SMEPOptimizer):
             rank = min(rank, min(g_flat.shape))
 
             try:
-                # U: (M, r), S: (r,), V: (N, r)
-                U, S, V = torch.svd_lowrank(g_flat, q=rank)
+                # Use CUDA kernel if available and on GPU
+                if CUDA_AVAILABLE and g_flat.is_cuda:
+                    # Use accelerated Dion update with error feedback
+                    error_buf = state["error_buffer"] if group["use_error_feedback"] else None
+                    update_lowrank, new_error_buf = dion_update_cuda(
+                        g_flat,
+                        rank=rank,
+                        error_buffer=error_buf,
+                        error_beta=group["error_beta"],
+                    )
+                    # Update error buffer if using error feedback
+                    if group["use_error_feedback"] and new_error_buf is not None:
+                        state["error_buffer"].copy_(new_error_buf)
+                else:
+                    # Fallback to CPU implementation
+                    # U: (M, r), S: (r,), V: (N, r)
+                    U, S, V = torch.svd_lowrank(g_flat, q=rank)
 
-                # Reconstruct: U @ V.T (scale-invariant, analogous to Muon)
-                # This ignores the singular values S (gradient magnitude)
-                update_lowrank = U @ V.T
+                    # Reconstruct: U @ V.T (scale-invariant, analogous to Muon)
+                    # This ignores the singular values S (gradient magnitude)
+                    update_lowrank = U @ V.T
 
-                # Error Feedback: Update buffer with residual
-                residual = g_flat - update_lowrank
-                state["error_buffer"].mul_(group["error_beta"]).add_(residual)
+                    # Error Feedback: Update buffer with residual
+                    if group["use_error_feedback"]:
+                        residual = g_flat - update_lowrank
+                        state["error_buffer"].mul_(group["error_beta"]).add_(residual)
 
                 return update_lowrank.view(g_flat.shape)
 

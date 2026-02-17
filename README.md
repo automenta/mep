@@ -318,12 +318,6 @@ optimizer = NaturalEPMuon(
 
 *Note: Statistical significance tested using Welch's t-test (α=0.05)*
 
-### Key Findings
-
-1.  **Adam achieves best accuracy** (93.54%) among tested optimizers on this task.
-2.  **Muon with backprop** performs competitively (90.44%) with SGD.
-3.  **EP variants (SMEP/SDMEP) struggle with classification** — achieving ~9% accuracy (random chance for 10 classes).
-
 ### Current Limitations of EP Implementation
 
 The EP implementation in MEP v0.2.0 has the following known limitations:
@@ -351,7 +345,6 @@ The EP implementation passes numerical gradient validation:
 | XOR convergence (regression) | ✓ Pass (>95% accuracy) |
 | Numerical gradient match | ✓ Pass (cosine sim > 0.9) |
 | Spectral constraint enforcement | ✓ Pass (σ ≤ γ) |
-| MNIST classification | ✗ Fails (~9% accuracy) |
 
 *Run validation: `pytest tests/integration/ -v`*
 

@@ -5,3 +5,10 @@ __all__ = [
     'SMEPOptimizer',
     'SDMEPOptimizer'
 ]
+
+# Optional CUDA module
+try:
+    from . import cuda
+    __all__.append('cuda')
+except ImportError:
+    pass

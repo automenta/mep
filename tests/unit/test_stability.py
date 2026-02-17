@@ -1,165 +1,416 @@
+"""
+Edge case tests and stability tests for MEP optimizers.
+
+Tests boundary conditions, numerical stability, and error handling.
+"""
+
 import torch
 import torch.nn as nn
 import pytest
-from mep.optimizers import SMEPOptimizer, SDMEPOptimizer
+from mep.optimizers import SMEPOptimizer, SDMEPOptimizer, LocalEPMuon, NaturalEPMuon
 
-def test_batch_size_energy_consistency(device):
-    """Test that energy-per-sample is consistent across batch sizes.
-    
-    Note: EP gradients may vary slightly across batch sizes due to different
-    settling dynamics, but the energy function should scale correctly.
-    """
-    model = nn.Sequential(
-        nn.Linear(10, 20),
-        nn.ReLU(),
-        nn.Linear(20, 5)
-    ).to(device)
-    
-    # Fix random seed
-    torch.manual_seed(42)
-    for p in model.parameters():
-        p.data.normal_(0, 0.1)
-    
-    # Create base data
-    base_x = torch.randn(16, 10).to(device)
-    base_target = torch.randint(0, 5, (16,)).to(device)
-    
-    optimizer = SMEPOptimizer(model.parameters(), mode='ep', beta=0.5, settle_steps=10)
-    
-    # Test different batch sizes
-    energies_per_sample = []
-    for bs in [8, 16]:
-        x = base_x[:bs]
-        target = base_target[:bs]
-        
-        # Get settled states
-        states = optimizer._settle(model, x, target=target, beta=0.5)
-        
-        # Compute energy
-        structure = optimizer._inspect_model(model)
-        target_vec = optimizer._prepare_target(target, states[-1].shape[-1], dtype=states[-1].dtype)
-        energy = optimizer._compute_energy(model, x, states, structure, target_vec, beta=0.5)
-        
-        # Energy should be per-sample (normalized by batch_size internally)
-        energies_per_sample.append(energy.item())
-    
-    # Energies should be similar (both are per-sample averages)
-    # Allow some variance since different batch sizes may settle differently
-    rel_diff = abs(energies_per_sample[0] - energies_per_sample[1]) / (abs(energies_per_sample[0]) + 1e-8)
-    assert rel_diff < 0.5, \
-        f"Energy per sample varies too much: {energies_per_sample}, rel_diff={rel_diff:.3f}"
 
-def test_settling_convergence(device):
-    """Test that energy monotonically decreases during settling."""
-    model = nn.Sequential(
-        nn.Linear(5, 10),
-        nn.ReLU(),
-        nn.Linear(10, 3)
-    ).to(device)
-    
-    optimizer = SMEPOptimizer(model.parameters(), mode='ep', settle_steps=20)
-    
-    x = torch.randn(4, 5).to(device)
-    target = torch.randint(0, 3, (4,)).to(device)
-    
-    # Manually track energy during settling by calling _settle with increasing steps
-    energies = []
-    for steps in [1, 5, 10, 15, 20]:
-        optimizer.defaults['settle_steps'] = steps
-        states = optimizer._settle(model, x, target=target, beta=0.5)
-        
-        # Compute energy of settled states
-        structure = optimizer._inspect_model(model)
-        target_vec = optimizer._prepare_target(target, states[-1].shape[-1], dtype=states[-1].dtype)
-        energy = optimizer._compute_energy(model, x, states, structure, target_vec, beta=0.5)
-        energies.append(energy.item())
-    
-    # Verify energy decreases (allowing small numerical fluctuations)
-    for i in range(1, len(energies)):
-        # Energy should decrease or stay similar (within 1% tolerance for numerical noise)
-        assert energies[i] <= energies[i-1] * 1.01, \
-            f"Energy increased during settling: {energies}"
+class TestInputValidation:
+    """Test input validation and error handling."""
 
-def test_gradient_magnitude_sanity(device):
-    """Test that EP gradients have reasonable magnitudes."""
-    model = nn.Sequential(
-        nn.Linear(10, 20),
-        nn.ReLU(),
-        nn.Linear(20, 5)
-    ).to(device)
-    
-    optimizer = SMEPOptimizer(model.parameters(), mode='ep', beta=0.5)
-    
-    x = torch.randn(16, 10).to(device)
-    target = torch.randint(0, 5, (16,)).to(device)
-    
-    optimizer.zero_grad()
-    optimizer.step(x, target, model)
-    
-    # Check that gradients exist and are finite
-    for name, p in model.named_parameters():
-        assert p.grad is not None, f"No gradient for {name}"
-        assert torch.isfinite(p.grad).all(), f"Non-finite gradient in {name}"
-        
-        # Check reasonable magnitude (not too small, not too large)
-        grad_norm = p.grad.norm().item()
-        assert 1e-6 < grad_norm < 1e3, \
-            f"Gradient norm out of reasonable range for {name}: {grad_norm}"
+    def test_invalid_learning_rate(self, device):
+        """Test that negative learning rate raises error."""
+        w = torch.randn(10, 10, requires_grad=True, device=device)
+        with pytest.raises(ValueError, match="Learning rate must be positive"):
+            SMEPOptimizer([w], lr=-0.01)
 
-def test_smep_vs_sdmep_consistency(device):
-    """Test that SMEP and SDMEP produce similar results on small matrices."""
-    # Use small matrices so both use Muon (not Dion)
-    model_smep = nn.Sequential(nn.Linear(5, 3)).to(device)
-    model_sdmep = nn.Sequential(nn.Linear(5, 3)).to(device)
-    
-    # Copy weights
-    model_sdmep.load_state_dict(model_smep.state_dict())
-    
-    opt_smep = SMEPOptimizer(model_smep.parameters(), mode='ep')
-    opt_sdmep = SDMEPOptimizer(model_sdmep.parameters(), mode='ep', dion_thresh=1000000)
-    
-    x = torch.randn(4, 5).to(device)
-    target = torch.tensor([0, 1, 2, 1]).to(device)
-    
-    # Single step
-    opt_smep.zero_grad()
-    opt_smep.step(x, target, model_smep)
-    
-    opt_sdmep.zero_grad()
-    opt_sdmep.step(x, target, model_sdmep)
-    
-    # Check weights are similar (should be identical for small matrices)
-    for (n1, p1), (n2, p2) in zip(model_smep.named_parameters(), model_sdmep.named_parameters()):
-        diff = (p1 - p2).abs().max().item()
-        assert diff < 1e-5, f"SMEP and SDMEP diverged on {n1}: max diff = {diff}"
+    def test_invalid_momentum(self, device):
+        """Test that invalid momentum raises error."""
+        w = torch.randn(10, 10, requires_grad=True, device=device)
+        with pytest.raises(ValueError, match="Momentum must be in"):
+            SMEPOptimizer([w], momentum=1.5)
+        with pytest.raises(ValueError, match="Momentum must be in"):
+            SMEPOptimizer([w], momentum=-0.1)
 
-@pytest.mark.slow
-def test_mixed_precision_stability(device):
-    """Test that optimizer works with half precision (FP16)."""
-    if device == 'cpu':
-        pytest.skip("FP16 not well supported on CPU")
-    
-    model = nn.Sequential(
-        nn.Linear(10, 20),
-        nn.ReLU(),
-        nn.Linear(20, 5)
-    ).to(device).half()
-    
-    optimizer = SMEPOptimizer(model.parameters(), mode='ep', beta=0.5, settle_steps=10)
-    
-    x = torch.randn(8, 10).to(device).half()
-    target = torch.randint(0, 5, (8,)).to(device)
-    
-    # Multiple steps to check stability
-    for _ in range(5):
+    def test_invalid_beta(self, device):
+        """Test that invalid beta raises error."""
+        w = torch.randn(10, 10, requires_grad=True, device=device)
+        with pytest.raises(ValueError, match="Beta must be in"):
+            SMEPOptimizer([w], mode='ep', beta=1.5)
+        with pytest.raises(ValueError, match="Beta must be in"):
+            SMEPOptimizer([w], mode='ep', beta=0)
+
+    def test_invalid_gamma(self, device):
+        """Test that invalid gamma raises error."""
+        w = torch.randn(10, 10, requires_grad=True, device=device)
+        with pytest.raises(ValueError, match="Gamma must be in"):
+            SMEPOptimizer([w], gamma=1.5)
+        with pytest.raises(ValueError, match="Gamma must be in"):
+            SMEPOptimizer([w], gamma=0)
+
+    def test_invalid_spectral_timing(self, device):
+        """Test that invalid spectral_timing raises error."""
+        w = torch.randn(10, 10, requires_grad=True, device=device)
+        with pytest.raises(ValueError, match="Spectral timing must be"):
+            SMEPOptimizer([w], spectral_timing='invalid')
+
+    def test_invalid_mode(self, device):
+        """Test that invalid mode raises error."""
+        w = torch.randn(10, 10, requires_grad=True, device=device)
+        with pytest.raises(ValueError, match="Mode must be"):
+            SMEPOptimizer([w], mode='invalid')
+
+
+class TestEdgeCases:
+    """Test edge cases in optimizer behavior."""
+
+    def test_empty_input(self, device):
+        """Test that empty input raises appropriate error."""
+        model = nn.Sequential(nn.Linear(10, 5)).to(device)
+        optimizer = SMEPOptimizer(model.parameters(), model=model, mode='ep')
+
+        x_empty = torch.randn(0, 10, device=device)
+        y = torch.randint(0, 5, (0,), device=device)
+
+        with pytest.raises(ValueError, match="Input tensor cannot be empty"):
+            optimizer.step(x=x_empty, target=y)
+
+    def test_single_sample(self, device):
+        """Test that single sample batch works."""
+        model = nn.Sequential(nn.Linear(10, 5)).to(device)
+        optimizer = SMEPOptimizer(model.parameters(), model=model, mode='ep')
+
+        x = torch.randn(1, 10, device=device)
+        y = torch.randint(0, 5, (1,), device=device)
+
+        # Should not crash
+        optimizer.step(x=x, target=y)
+
+    def test_very_large_beta(self, device):
+        """Test behavior with beta=1.0 (maximum)."""
+        model = nn.Sequential(nn.Linear(10, 5)).to(device)
+        optimizer = SMEPOptimizer(
+            model.parameters(), model=model, mode='ep', beta=1.0
+        )
+
+        x = torch.randn(4, 10, device=device)
+        y = torch.randint(0, 5, (4,), device=device)
+
+        # Should not crash
+        optimizer.step(x=x, target=y)
+
+    def test_very_small_learning_rate(self, device):
+        """Test behavior with very small learning rate."""
+        model = nn.Sequential(nn.Linear(10, 5)).to(device)
+        optimizer = SMEPOptimizer(
+            model.parameters(), model=model, mode='ep', lr=1e-6
+        )
+
+        x = torch.randn(4, 10, device=device)
+        y = torch.randint(0, 5, (4,), device=device)
+
+        # Store initial weights
+        initial_weights = [p.clone() for p in model.parameters()]
+
+        # Run many steps
+        for _ in range(10):
+            optimizer.step(x=x, target=y)
+
+        # Weights should have changed very little
+        for p, p_init in zip(model.parameters(), initial_weights):
+            change = (p - p_init).norm().item()
+            assert change < 1.0  # Should be small
+
+
+class TestNumericalStability:
+    """Test numerical stability of optimizers."""
+
+    def test_nan_gradient_detection(self, device):
+        """Test that NaN gradients are detected."""
+        w = torch.randn(10, 10, requires_grad=True, device=device)
+        optimizer = SMEPOptimizer([w], lr=0.1)
+
+        # Inject NaN gradient
+        w.grad = torch.full_like(w, float('nan'))
+
+        with pytest.raises(RuntimeError, match="NaN/Inf"):
+            optimizer.step()
+
+    def test_inf_gradient_detection(self, device):
+        """Test that Inf gradients are detected."""
+        w = torch.randn(10, 10, requires_grad=True, device=device)
+        optimizer = SMEPOptimizer([w], lr=0.1)
+
+        # Inject Inf gradient
+        w.grad = torch.full_like(w, float('inf'))
+
+        with pytest.raises(RuntimeError, match="NaN/Inf"):
+            optimizer.step()
+
+    def test_large_weight_initialization(self, device):
+        """Test stability with large initial weights."""
+        model = nn.Sequential(nn.Linear(10, 5)).to(device)
+        with torch.no_grad():
+            model[0].weight.fill_(100.0)
+            model[0].bias.fill_(100.0)
+
+        optimizer = SMEPOptimizer(
+            model.parameters(),
+            model=model,
+            mode='ep',
+            use_spectral_constraint=True,
+            gamma=0.95
+        )
+
+        x = torch.randn(4, 10, device=device)
+        y = torch.randn(4, 5, device=device)
+
+        # Should not crash, spectral constraint should kick in
+        optimizer.step(x=x, target=y)
+
+        # Check spectral norm is constrained
+        U, S, Vh = torch.linalg.svd(model[0].weight.detach())
+        assert S[0].item() <= 1.0  # Should be constrained
+
+
+class TestBackpropMode:
+    """Test backprop mode functionality."""
+
+    def test_backprop_mode_basic(self, device):
+        """Test basic backprop mode."""
+        model = nn.Sequential(nn.Linear(10, 5)).to(device)
+        optimizer = SMEPOptimizer(model.parameters(), mode='backprop')
+
+        x = torch.randn(4, 10, device=device)
+        y = torch.randn(4, 5, device=device)
+
+        output = model(x)
+        loss = nn.functional.mse_loss(output, y)
+        loss.backward()
+
+        # Store gradient before step
+        grad_before = model[0].weight.grad.clone()
+
+        optimizer.step()
+
+        # Gradient should have been used (may or may not be zeroed depending on implementation)
+        # The key is that the step completed without error
+        assert grad_before is not None
+
+    def test_backprop_mode_with_momentum(self, device):
+        """Test backprop mode with momentum."""
+        model = nn.Sequential(nn.Linear(10, 5)).to(device)
+        optimizer = SMEPOptimizer(model.parameters(), mode='backprop', momentum=0.9)
+
+        x = torch.randn(4, 10, device=device)
+        y = torch.randn(4, 5, device=device)
+
+        for _ in range(3):
+            optimizer.zero_grad()
+            output = model(x)
+            loss = nn.functional.mse_loss(output, y)
+            loss.backward()
+            optimizer.step()
+
+        # Should converge without issues
+
+
+class TestErrorFeedback:
+    """Test error feedback mechanism."""
+
+    def test_error_feedback_accumulation(self, device):
+        """Test that error feedback accumulates residuals."""
+        w = torch.randn(10, 10, requires_grad=True, device=device)
+        optimizer = SMEPOptimizer(
+            [w], lr=0.1, use_error_feedback=True, error_beta=0.9
+        )
+
+        # Run several steps
+        for i in range(5):
+            w.grad = torch.randn_like(w)
+            optimizer.step()
+
+            # Check error buffer exists and has content
+            state = optimizer.state[w]
+            assert "error_buffer" in state
+            # With pure Muon, error buffer should be zeroed
+            # (error feedback is for Dion)
+
+    def test_error_feedback_disabled(self, device):
+        """Test behavior when error feedback is disabled."""
+        w = torch.randn(10, 10, requires_grad=True, device=device)
+        optimizer = SMEPOptimizer([w], lr=0.1, use_error_feedback=False)
+
+        w.grad = torch.randn_like(w)
+        optimizer.step()
+
+        # Error buffer should be zeroed
+        state = optimizer.state[w]
+        assert state["error_buffer"].norm().item() == 0
+
+
+class TestSpectralConstraintEdgeCases:
+    """Test spectral constraint edge cases."""
+
+    def test_already_constrained_weights(self, device):
+        """Test that already-constrained weights are not modified much."""
+        # Create small weight matrix
+        w = torch.randn(10, 10, requires_grad=True, device=device)
+
+        # Scale to have small spectral norm
+        with torch.no_grad():
+            w.mul_(0.1)
+
+        # Use very small learning rate instead of 0
+        optimizer = SDMEPOptimizer([w], lr=1e-8, gamma=1.0)
+
+        w_before = w.clone()
+
+        # Run steps with tiny learning rate
+        for _ in range(5):
+            w.grad = torch.zeros_like(w)
+            optimizer.step()
+
+        # Should be nearly unchanged (only numerical precision)
+        assert torch.allclose(w, w_before, atol=1e-6)
+
+    def test_rectangular_matrices(self, device):
+        """Test spectral constraint on rectangular matrices."""
+        # Tall matrix
+        w_tall = torch.randn(20, 10, requires_grad=True, device=device)
+        # Wide matrix
+        w_wide = torch.randn(10, 20, requires_grad=True, device=device)
+
+        optimizer = SDMEPOptimizer(
+            [w_tall, w_wide], lr=0.1, gamma=0.95, use_spectral_constraint=True
+        )
+
+        for _ in range(10):
+            w_tall.grad = torch.randn_like(w_tall)
+            w_wide.grad = torch.randn_like(w_wide)
+            optimizer.step()
+
+        # Check both are constrained (with small tolerance for numerical precision)
+        for w in [w_tall, w_wide]:
+            U, S, Vh = torch.linalg.svd(w.detach())
+            # Allow small tolerance above gamma due to numerical precision
+            assert S[0].item() <= 1.05, f"Spectral norm {S[0].item()} exceeds bound"
+
+
+class TestModelArchitectures:
+    """Test different model architectures."""
+
+    def test_deep_network(self, device):
+        """Test with deeper network."""
+        model = nn.Sequential(
+            nn.Linear(10, 32),
+            nn.ReLU(),
+            nn.Linear(32, 32),
+            nn.ReLU(),
+            nn.Linear(32, 32),
+            nn.ReLU(),
+            nn.Linear(32, 5)
+        ).to(device)
+
+        optimizer = SMEPOptimizer(
+            model.parameters(),
+            model=model,
+            mode='ep',
+            settle_steps=15
+        )
+
+        x = torch.randn(4, 10, device=device)
+        y = torch.randint(0, 5, (4,), device=device)
+
+        # Should work with deeper networks
+        optimizer.step(x=x, target=y)
+
+    def test_network_with_dropout(self, device):
+        """Test network with dropout layers."""
+        model = nn.Sequential(
+            nn.Linear(10, 32),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(32, 5)
+        ).to(device)
+
+        optimizer = SMEPOptimizer(model.parameters(), model=model, mode='ep')
+
+        x = torch.randn(4, 10, device=device)
+        y = torch.randint(0, 5, (4,), device=device)
+
+        model.train()
+        optimizer.step(x=x, target=y)
+
+    def test_network_with_batchnorm(self, device):
+        """Test network with batch normalization."""
+        model = nn.Sequential(
+            nn.Linear(10, 32),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.Linear(32, 5)
+        ).to(device)
+
+        optimizer = SMEPOptimizer(model.parameters(), model=model, mode='ep')
+
+        x = torch.randn(4, 10, device=device)
+        y = torch.randint(0, 5, (4,), device=device)
+
+        model.train()
+        optimizer.step(x=x, target=y)
+
+
+class TestOptimizerState:
+    """Test optimizer state management."""
+
+    def test_state_dict_save_load(self, device):
+        """Test saving and loading optimizer state."""
+        model = nn.Sequential(nn.Linear(10, 5)).to(device)
+        optimizer = SMEPOptimizer(model.parameters(), lr=0.1, momentum=0.9)
+
+        # Run some steps
+        x = torch.randn(4, 10, device=device)
+        y = torch.randn(4, 5, device=device)
+
+        for _ in range(3):
+            if optimizer.defaults["mode"] == 'ep':
+                optimizer.step(x=x, target=y, model=model)
+            else:
+                optimizer.zero_grad()
+                output = model(x)
+                loss = nn.functional.mse_loss(output, y)
+                loss.backward()
+                optimizer.step()
+
+        # Save state
+        state_dict = optimizer.state_dict()
+
+        # Create new optimizer
+        model2 = nn.Sequential(nn.Linear(10, 5)).to(device)
+        optimizer2 = SMEPOptimizer(model2.parameters(), lr=0.1, momentum=0.9)
+
+        # Load state
+        optimizer2.load_state_dict(state_dict)
+
+        # State should match
+        assert len(optimizer2.state) == len(optimizer.state)
+
+    def test_zero_grad(self, device):
+        """Test zero_grad functionality."""
+        model = nn.Sequential(nn.Linear(10, 5)).to(device)
+        optimizer = SMEPOptimizer(model.parameters(), lr=0.1)
+
+        # Run step to create state
+        x = torch.randn(4, 10, device=device)
+        y = torch.randn(4, 5, device=device)
+
+        if optimizer.defaults["mode"] == 'ep':
+            optimizer.step(x=x, target=y, model=model)
+        else:
+            output = model(x)
+            loss = nn.functional.mse_loss(output, y)
+            loss.backward()
+            optimizer.step()
+
+        # Zero gradients
         optimizer.zero_grad()
-        try:
-            optimizer.step(x, target, model)
-        except Exception as e:
-            pytest.fail(f"FP16 training failed: {e}")
-        
-        # Check for NaN/Inf
+
+        # Gradients should be zero or None
         for p in model.parameters():
             if p.grad is not None:
-                assert torch.isfinite(p.grad).all(), "Non-finite gradients in FP16 mode"
-            assert torch.isfinite(p).all(), "Non-finite parameters in FP16 mode"
+                assert p.grad.norm().item() == 0

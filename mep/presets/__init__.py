@@ -191,6 +191,7 @@ def sdmep(
 def local_ep(
     params: Iterable[nn.Parameter],
     model: nn.Module,
+    mode: str = "ep",  # Ignored, for compatibility
     lr: float = 0.02,
     momentum: float = 0.9,
     weight_decay: float = 0.0005,
@@ -251,6 +252,7 @@ def local_ep(
 def natural_ep(
     params: Iterable[nn.Parameter],
     model: nn.Module,
+    mode: str = "ep",  # Ignored, for compatibility
     lr: float = 0.02,
     momentum: float = 0.9,
     weight_decay: float = 0.0005,

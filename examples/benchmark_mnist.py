@@ -11,7 +11,7 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from torchvision import datasets, transforms
-from mep.optimizers import SMEPOptimizer, SDMEPOptimizer
+from mep import smep, sdmep
 
 def get_args():
     parser = argparse.ArgumentParser(description='SDMEP Benchmark')
@@ -46,10 +46,10 @@ def get_optimizer(args, model):
         return torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
     elif args.optimizer == "SMEP":
         # SMEP in EP mode
-        return SMEPOptimizer(model.parameters(), lr=args.lr, mode='ep', ns_steps=4)
+        return smep(model.parameters(), model=model, lr=args.lr, mode='ep', ns_steps=4)
     elif args.optimizer == "SDMEP":
         # SDMEP in EP mode
-        return SDMEPOptimizer(model.parameters(), lr=args.lr, gamma=0.95,
+        return sdmep(model.parameters(), model=model, lr=args.lr, gamma=0.95,
                                    rank_frac=0.1, error_beta=0.9, dion_thresh=500000, mode='ep')
     else:
         raise ValueError(f"Unknown optimizer: {args.optimizer}")
@@ -120,7 +120,7 @@ def train(args):
             else:
                 # EP Modes
                 # Note: SMEP/SDMEP step handles EP gradient computation internally
-                optimizer.step(x=x, target=y, model=model)
+                optimizer.step(x=x, target=y)
 
                 # Inference for stats (extra forward pass)
                 with torch.no_grad():

@@ -230,8 +230,14 @@ def create_optimizer(
     
     # Merge configs
     all_config = {**opt_config, **ep_config, **dion_config, **opt_overrides}
+
+    # Map friendly names to actual optimizer types
+    if '_' in optimizer_name:
+        base_optimizer_name = optimizer_name.split('_')[0]
+    else:
+        base_optimizer_name = optimizer_name
     
-    if optimizer_name == 'SGD':
+    if optimizer_name == 'SGD' or base_optimizer_name == 'Backprop':
         return torch.optim.SGD(
             model.parameters(),
             lr=all_config.get('lr', 0.05),
@@ -253,7 +259,7 @@ def create_optimizer(
             weight_decay=all_config.get('weight_decay', 0.01)
         )
     
-    elif optimizer_name == 'SMEP':
+    elif base_optimizer_name == 'SMEP':
         return smep(
             model.parameters(),
             model=model,
@@ -263,7 +269,6 @@ def create_optimizer(
             settle_steps=all_config.get('settle_steps', 15),
             settle_lr=all_config.get('settle_lr', 0.02),
             ns_steps=all_config.get('ns_steps', 5),
-            use_spectral_constraint=all_config.get('use_spectral_constraint', True),
             gamma=all_config.get('gamma', 0.95),
             use_error_feedback=all_config.get('use_error_feedback', True),
             error_beta=all_config.get('error_beta', 0.9),
@@ -290,7 +295,7 @@ def create_optimizer(
         )
     
     else:
-        raise ValueError(f"Unknown optimizer: {optimizer_name}")
+        raise ValueError(f"Unknown optimizer: {optimizer_name} (base: {base_optimizer_name})")
 
 
 def train_epoch(
@@ -409,7 +414,14 @@ def run_benchmark(
     
     # Create optimizer
     optimizer = create_optimizer(optimizer_name, model, config)
-    is_ep = optimizer_name in ['SMEP', 'SDMEP']
+
+    # Determine base name for EP check
+    if '_' in optimizer_name:
+        base_optimizer_name = optimizer_name.split('_')[0]
+    else:
+        base_optimizer_name = optimizer_name
+
+    is_ep = base_optimizer_name in ['SMEP', 'SDMEP']
     
     # Training loop
     result = BenchmarkResult(

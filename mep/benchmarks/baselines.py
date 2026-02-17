@@ -7,7 +7,7 @@ Includes both standard PyTorch optimizers (baselines) and EP-based optimizers.
 
 from typing import Tuple, Any
 import torch.optim as optim
-from mep.optimizers import SMEPOptimizer, SDMEPOptimizer, LocalEPMuon, NaturalEPMuon
+from mep import smep, sdmep, local_ep, natural_ep, muon_backprop
 
 
 def get_optimizer(
@@ -46,16 +46,6 @@ def get_optimizer(
     name = name.lower()
     params = model.parameters()
 
-    def _exclude(kwargs: dict, exclude_keys: tuple) -> dict:
-        """Filter out excluded keys from kwargs."""
-        return {k: v for k, v in kwargs.items() if k not in exclude_keys}
-
-    # SDMEP-specific keys that other optimizers don't use
-    _SDMEP_KEYS = ('rank_frac', 'dion_thresh')
-
-    # Common kwargs for SMEP-based optimizers
-    _SMEP_KWARGS = _exclude(kwargs, _SDMEP_KEYS)
-
     if name == 'sgd':
         return optim.SGD(params, lr=lr, momentum=momentum, weight_decay=weight_decay), False
 
@@ -65,49 +55,75 @@ def get_optimizer(
     if name == 'adamw':
         return optim.AdamW(params, lr=lr, weight_decay=weight_decay), False
 
-    if name == 'eqprop':
-        # Vanilla EP: SMEP with ns_steps=0 (no Newton-Schulz orthogonalization)
-        eq_kwargs = _exclude(_SMEP_KWARGS, ('ns_steps',))
-        return SMEPOptimizer(
-            params, model=model, lr=lr, momentum=momentum, wd=weight_decay,
-            mode='ep', ns_steps=0, **eq_kwargs
-        ), True
-
     if name == 'muon':
-        # Standalone Muon: SMEP in backprop mode
-        muon_kwargs = _exclude(_SMEP_KWARGS, ('mode',))
-        return SMEPOptimizer(
-            params, model=model, lr=lr, momentum=momentum, wd=weight_decay,
-            mode='backprop', **muon_kwargs
+        # Standalone Muon: backprop with Muon orthogonalization
+        return muon_backprop(
+            params, lr=lr, momentum=momentum, weight_decay=weight_decay,
+            ns_steps=kwargs.get('ns_steps', 5),
+            gamma=kwargs.get('gamma', 0.95)
         ), False
 
+    if name == 'eqprop':
+        # Vanilla EP: SMEP with no Newton-Schulz orthogonalization
+        return smep(
+            params, model=model, lr=lr, momentum=momentum, weight_decay=weight_decay,
+            mode='ep', ns_steps=0,
+            beta=kwargs.get('beta', 0.5),
+            settle_steps=kwargs.get('settle_steps', 10),
+            settle_lr=kwargs.get('settle_lr', 0.05),
+            use_error_feedback=False
+        ), True
+
     if name == 'smep':
-        # SMEP: Muon + EP gradients
-        return SMEPOptimizer(
-            params, model=model, lr=lr, momentum=momentum, wd=weight_decay,
-            mode='ep', **_SMEP_KWARGS
+        # Spectral Muon EP
+        return smep(
+            params, model=model, lr=lr, momentum=momentum, weight_decay=weight_decay,
+            mode='ep',
+            beta=kwargs.get('beta', 0.5),
+            settle_steps=kwargs.get('settle_steps', 10),
+            settle_lr=kwargs.get('settle_lr', 0.05),
+            gamma=kwargs.get('gamma', 0.95),
+            ns_steps=kwargs.get('ns_steps', 5),
+            error_beta=kwargs.get('error_beta', 0.9),
+            use_error_feedback=kwargs.get('use_error_feedback', True),
+            loss_type=kwargs.get('loss_type', 'mse')
         ), True
 
     if name == 'sdmep':
-        # Full SDMEP: Dion + Muon + EP
-        return SDMEPOptimizer(
-            params, model=model, lr=lr, momentum=momentum, wd=weight_decay,
-            mode='ep', **kwargs
+        # Full SDMEP with Dion for large matrices
+        return sdmep(
+            params, model=model, lr=lr, momentum=momentum, weight_decay=weight_decay,
+            mode='ep',
+            beta=kwargs.get('beta', 0.5),
+            settle_steps=kwargs.get('settle_steps', 10),
+            settle_lr=kwargs.get('settle_lr', 0.05),
+            gamma=kwargs.get('gamma', 0.95),
+            rank_frac=kwargs.get('rank_frac', 0.2),
+            dion_thresh=kwargs.get('dion_thresh', 100000),
+            error_beta=kwargs.get('error_beta', 0.9),
+            loss_type=kwargs.get('loss_type', 'mse')
         ), True
 
     if name == 'local_ep':
-        # Local EP: Layer-local updates only
-        return LocalEPMuon(
-            params, model=model, lr=lr, momentum=momentum, wd=weight_decay,
-            mode='ep', **_SMEP_KWARGS
+        # Local EP with layer-local updates
+        return local_ep(
+            params, model=model, lr=lr, momentum=momentum, weight_decay=weight_decay,
+            beta=kwargs.get('beta', 0.1),
+            settle_steps=kwargs.get('settle_steps', 10),
+            settle_lr=kwargs.get('settle_lr', 0.05),
+            gamma=kwargs.get('gamma', 0.95)
         ), True
 
     if name == 'natural_ep':
-        # Natural EP: Fisher Information whitening
-        return NaturalEPMuon(
-            params, model=model, lr=lr, momentum=momentum, wd=weight_decay,
-            mode='ep', **_SMEP_KWARGS
+        # Natural EP with Fisher whitening
+        return natural_ep(
+            params, model=model, lr=lr, momentum=momentum, weight_decay=weight_decay,
+            beta=kwargs.get('beta', 0.5),
+            settle_steps=kwargs.get('settle_steps', 10),
+            settle_lr=kwargs.get('settle_lr', 0.05),
+            gamma=kwargs.get('gamma', 0.95),
+            fisher_approx=kwargs.get('fisher_approx', 'empirical'),
+            fisher_damping=kwargs.get('fisher_damping', 1e-3)
         ), True
 
-    raise ValueError(f"Unknown optimizer: {name}. Available: sgd, adam, adamw, muon, "
-                     f"eqprop, smep, sdmep, local_ep, natural_ep")
+    raise ValueError(f"Unknown optimizer: {name}. Available: sgd, adam, adamw, muon, eqprop, smep, sdmep, local_ep, natural_ep")

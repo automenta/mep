@@ -96,10 +96,17 @@ class CompositeOptimizer(Optimizer):
         self.update = update
         self.constraint = constraint or NoConstraint()
         self.feedback = feedback or NoFeedback()
-        
+
         # Utilities
         self._inspector = ModelInspector()
-        self._energy_fn = EnergyFunction()
+        
+        # Get loss_type from gradient strategy if available
+        loss_type = getattr(gradient, 'loss_type', 'mse')
+        softmax_temperature = getattr(gradient, 'softmax_temperature', 1.0)
+        self._energy_fn = EnergyFunction(
+            loss_type=loss_type,
+            softmax_temperature=softmax_temperature
+        )
         
         # Cache for EP states (when using wrapped model)
         self._free_states: Optional[List[torch.Tensor]] = None

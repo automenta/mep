@@ -68,6 +68,13 @@ class EPGradient:
         loss_type: str = "mse",
         softmax_temperature: float = 1.0,
     ):
+        if not (0 < beta <= 1):
+            raise ValueError(f"Beta must be in (0, 1], got {beta}")
+        if settle_steps <= 0:
+            raise ValueError(f"Settle steps must be positive, got {settle_steps}")
+        if settle_lr <= 0:
+            raise ValueError(f"Settle learning rate must be positive, got {settle_lr}")
+        
         self.beta = beta
         self.settle_steps = settle_steps
         self.settle_lr = settle_lr

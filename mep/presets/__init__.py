@@ -40,17 +40,18 @@ def smep(
     error_beta: float = 0.9,
     use_error_feedback: bool = True,
     loss_type: str = "mse",
+    softmax_temperature: float = 1.0,
     **kwargs: Any
 ) -> CompositeOptimizer:
     """
     SMEP: Spectral Muon Equilibrium Propagation.
-    
+
     Combines:
     - EP or backprop gradients
     - Muon (Newton-Schulz) orthogonalization
     - Spectral norm constraints
     - Error feedback
-    
+
     Args:
         params: Parameters to optimize.
         model: Model instance.
@@ -67,7 +68,8 @@ def smep(
         error_beta: Error feedback decay.
         use_error_feedback: Enable error feedback.
         loss_type: 'mse' or 'cross_entropy'.
-    
+        softmax_temperature: Temperature for softmax in classification.
+
     Returns:
         Configured CompositeOptimizer.
     """
@@ -78,22 +80,23 @@ def smep(
             settle_steps=settle_steps,
             settle_lr=settle_lr,
             loss_type=loss_type,
+            softmax_temperature=softmax_temperature,
         )
     else:
         gradient = BackpropGradient()
-    
+
     # Update strategy
     update = MuonUpdate(ns_steps=ns_steps)
-    
+
     # Constraint strategy
     constraint = SpectralConstraint(
         gamma=gamma,
         timing=spectral_timing,
     )
-    
+
     # Feedback strategy
     feedback = ErrorFeedback(beta=error_beta) if use_error_feedback else NoFeedback()
-    
+
     return CompositeOptimizer(
         params,
         gradient=gradient,
@@ -111,6 +114,7 @@ def smep(
 def sdmep(
     params: Iterable[nn.Parameter],
     model: nn.Module,
+    mode: str = "ep",
     lr: float = 0.02,
     momentum: float = 0.9,
     weight_decay: float = 0.0005,
@@ -123,6 +127,7 @@ def sdmep(
     dion_thresh: int = 100000,
     error_beta: float = 0.9,
     loss_type: str = "mse",
+    softmax_temperature: float = 1.0,
     **kwargs: Any
 ) -> CompositeOptimizer:
     """

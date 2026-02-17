@@ -57,7 +57,7 @@ class SpectralConstraint:
     ):
         """
         Initialize spectral constraint.
-        
+
         Args:
             gamma: Maximum allowed spectral norm (must be in (0, 1]).
             power_iter: Number of power iterations for estimation.
@@ -65,7 +65,9 @@ class SpectralConstraint:
         """
         if not (0 < gamma <= 1):
             raise ValueError(f"gamma must be in (0, 1], got {gamma}")
-        
+        if timing not in ("post_update", "during_settling", "both"):
+            raise ValueError(f"Spectral timing must be 'post_update', 'during_settling', or 'both', got '{timing}'")
+
         self.gamma = gamma
         self.power_iter = power_iter
         self.timing = timing

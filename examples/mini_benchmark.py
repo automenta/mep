@@ -5,7 +5,7 @@ from torchvision import datasets, transforms
 import time
 import sys
 
-from mep.optimizers import SMEPOptimizer, SDMEPOptimizer, LocalEPMuon, NaturalEPMuon
+from mep import smep, sdmep, local_ep, natural_ep
 
 # Configuration
 BATCH_SIZE = 64
@@ -77,11 +77,11 @@ def train(optimizer_class, name, **kwargs):
             optimizer.zero_grad()
 
             # EP Training Step
-            output = model(data)
-            optimizer.step(target=target)
+            optimizer.step(x=data, target=target)
 
             # Compute loss/acc for reporting (using the free phase output)
             with torch.no_grad():
+                 output = model(data)
                  pred = output.argmax(dim=1, keepdim=True)
                  correct += pred.eq(target.view_as(pred)).sum().item()
                  total += target.size(0)
@@ -104,19 +104,19 @@ if __name__ == "__main__":
     results = {}
 
     # 1. Standard SMEP (EP Mode)
-    loss, acc, t = train(SMEPOptimizer, "SMEP (Standard EP)", mode='ep')
+    loss, acc, t = train(smep, "SMEP (Standard EP)", mode='ep')
     results['SMEP'] = (loss, acc, t)
 
     # 2. SDMEP (Dion-Muon)
-    loss, acc, t = train(SDMEPOptimizer, "SDMEP (Dion-Muon)", mode='ep', dion_thresh=1000)
+    loss, acc, t = train(sdmep, "SDMEP (Dion-Muon)", mode='ep', dion_thresh=1000)
     results['SDMEP'] = (loss, acc, t)
 
     # 3. LocalEPMuon
-    loss, acc, t = train(LocalEPMuon, "LocalEPMuon (Bio-Plausible)", mode='ep')
+    loss, acc, t = train(local_ep, "LocalEPMuon (Bio-Plausible)", mode='ep')
     results['LocalEPMuon'] = (loss, acc, t)
 
     # 4. NaturalEPMuon
-    loss, acc, t = train(NaturalEPMuon, "NaturalEPMuon (Fisher)", mode='ep', fisher_approx='empirical')
+    loss, acc, t = train(natural_ep, "NaturalEPMuon (Fisher)", mode='ep', fisher_approx='empirical')
     results['NaturalEPMuon'] = (loss, acc, t)
 
     print("\n\n=== Final Comparison ===")

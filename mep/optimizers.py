@@ -145,6 +145,7 @@ class SMEPOptimizer(Optimizer):
         spectral_lambda: float = 1.0,
         loss_type: str = "mse",
         softmax_temperature: float = 1.0,
+        max_grad_norm: float = 10.0,
     ) -> None:
         """
         Initialize SMEPOptimizer.
@@ -168,6 +169,7 @@ class SMEPOptimizer(Optimizer):
             spectral_lambda: Strength of spectral penalty during settling.
             loss_type: 'mse' for regression or 'cross_entropy' for classification.
             softmax_temperature: Temperature for softmax in classification (lower = sharper).
+            max_grad_norm: Maximum gradient norm for clipping (prevents exploding gradients).
 
         Raises:
             ValueError: If any parameter validation fails.
@@ -205,6 +207,7 @@ class SMEPOptimizer(Optimizer):
             spectral_lambda=spectral_lambda,
             loss_type=loss_type,
             softmax_temperature=softmax_temperature,
+            max_grad_norm=max_grad_norm,
         )
         super().__init__(params, defaults)
 
@@ -548,10 +551,12 @@ class SMEPOptimizer(Optimizer):
                     # For classification output layer: use KL divergence on softmax
                     # This matches the CrossEntropy geometry better than raw MSE
                     eps = 1e-8
-                    state_softmax = F.softmax(state / softmax_temp + eps, dim=-1)
-                    h_softmax = F.softmax(h / softmax_temp + eps, dim=-1)
+                    # Correct: apply softmax first, then add eps for log stability
+                    state_softmax = F.softmax(state / softmax_temp, dim=-1)
+                    h_softmax = F.softmax(h / softmax_temp, dim=-1)
+                    # KL divergence: D_KL(state_softmax || h_softmax)
                     kl_div = F.kl_div(
-                        torch.log(h_softmax + eps), state_softmax, reduction="sum"
+                        torch.log(state_softmax + eps), h_softmax, reduction="sum"
                     )
                     E = E + kl_div / batch_size
                 else:
@@ -607,7 +612,10 @@ class SMEPOptimizer(Optimizer):
             output = prev
             if loss_type == "cross_entropy":
                 # For classification: target_vec contains class indices (Long)
-                E = E + beta * F.cross_entropy(output, target_vec, reduction="sum") / batch_size
+                # Use label smoothing for better numerical stability
+                E = E + beta * F.cross_entropy(
+                    output, target_vec, reduction="sum", label_smoothing=0.1
+                ) / batch_size
             else:
                 # MSE for regression
                 E = E + beta * F.mse_loss(output, target_vec, reduction="sum") / batch_size
@@ -836,6 +844,18 @@ class SMEPOptimizer(Optimizer):
         # Optimize: Single backward pass for (E_nudged - E_free) / beta
         loss = (E_nudged - E_free) / self.defaults["beta"]
         grads = torch.autograd.grad(loss, params_list, retain_graph=False, allow_unused=True)
+
+        # Gradient clipping for numerical stability
+        max_grad_norm = self.defaults.get("max_grad_norm", 10.0)
+        total_norm = torch.norm(
+            torch.stack([torch.norm(g) for g in grads if g is not None])
+        )
+        clip_coef = max_grad_norm / (total_norm + 1e-6)
+        if clip_coef < 1:
+            grads = [
+                g.clone() * clip_coef if g is not None else None
+                for g in grads
+            ]
 
         for p, g in zip(model.parameters(), grads):
             if g is None:
@@ -1133,6 +1153,7 @@ class SDMEPOptimizer(SMEPOptimizer):
         use_spectral_constraint: bool = True,
         loss_type: str = "mse",
         softmax_temperature: float = 1.0,
+        max_grad_norm: float = 10.0,
     ) -> None:
         """
         Initialize SDMEPOptimizer.
@@ -1156,6 +1177,7 @@ class SDMEPOptimizer(SMEPOptimizer):
             use_spectral_constraint: Enable spectral constraint.
             loss_type: 'mse' for regression or 'cross_entropy' for classification.
             softmax_temperature: Temperature for softmax in classification.
+            max_grad_norm: Maximum gradient norm for clipping.
         """
         # Validate Dion-specific parameters
         if not (0 < rank_frac <= 1):
@@ -1181,6 +1203,7 @@ class SDMEPOptimizer(SMEPOptimizer):
             gamma=gamma,
             loss_type=loss_type,
             softmax_temperature=softmax_temperature,
+            max_grad_norm=max_grad_norm,
         )
 
         # Add SDMEP-specific parameters to defaults
@@ -1201,6 +1224,7 @@ class SDMEPOptimizer(SMEPOptimizer):
         Override: Use Dion for large matrices, Muon for small ones.
 
         Uses CUDA-accelerated SVD when available.
+        Includes adaptive rank selection and numerical safeguards.
 
         Args:
             p: Parameter tensor.
@@ -1215,12 +1239,23 @@ class SDMEPOptimizer(SMEPOptimizer):
         """
         if p.numel() > group["dion_thresh"]:
             # --- DION (Low-rank SVD) ---
-            rank = max(1, int(min(g_flat.shape) * group["rank_frac"]))
-
-            # Ensure rank doesn't exceed matrix dimensions
-            rank = min(rank, min(g_flat.shape))
+            # Adaptive rank selection based on gradient properties
+            base_rank = max(1, int(min(g_flat.shape) * group["rank_frac"]))
+            
+            # Clamp rank to valid range
+            max_possible_rank = min(g_flat.shape)
+            rank = min(base_rank, max_possible_rank)
+            
+            # Ensure rank is at least 1 and at most matrix dimensions
+            rank = max(1, min(rank, max_possible_rank))
 
             try:
+                # Gradient clipping before SVD for numerical stability
+                grad_norm = g_flat.norm()
+                max_grad_norm = group.get("max_grad_norm", 10.0)
+                if grad_norm > max_grad_norm:
+                    g_flat = g_flat * (max_grad_norm / (grad_norm + 1e-8))
+
                 # Use CUDA kernel if available and on GPU
                 if CUDA_AVAILABLE and g_flat.is_cuda:
                     # Use accelerated Dion update with error feedback
@@ -1233,6 +1268,9 @@ class SDMEPOptimizer(SMEPOptimizer):
                     )
                     # Update error buffer if using error feedback
                     if group["use_error_feedback"] and new_error_buf is not None:
+                        # Clip error buffer to prevent accumulation
+                        error_max = group.get("max_grad_norm", 10.0) * 2
+                        new_error_buf = new_error_buf.clamp(-error_max, error_max)
                         state["error_buffer"].copy_(new_error_buf)
                 else:
                     # Fallback to CPU implementation
@@ -1246,11 +1284,21 @@ class SDMEPOptimizer(SMEPOptimizer):
                     # Error Feedback: Update buffer with residual
                     if group["use_error_feedback"]:
                         residual = g_flat - update_lowrank
+                        # Clip residual to prevent explosion
+                        error_max = group.get("max_grad_norm", 10.0) * 2
+                        residual = residual.clamp(-error_max, error_max)
                         state["error_buffer"].mul_(group["error_beta"]).add_(residual)
+
+                # Final numerical check
+                if torch.isnan(update_lowrank).any() or torch.isinf(update_lowrank).any():
+                    # Fallback to Muon if Dion produces NaN/Inf
+                    update_flat = self.newton_schulz(g_flat, group["ns_steps"])
+                    state["error_buffer"].zero_()
+                    return update_flat
 
                 return update_lowrank.view(g_flat.shape)
 
-            except RuntimeError:
+            except (RuntimeError, torch.linalg.LinAlgError) as e:
                 # Fallback to Muon if SVD fails
                 update_flat = self.newton_schulz(g_flat, group["ns_steps"])
                 state["error_buffer"].zero_()

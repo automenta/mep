@@ -97,7 +97,8 @@ class EnergyFunction:
                     E = E + self._kl_energy(state, h, batch_size)
                 else:
                     # MSE for hidden layers and regression
-                    E = E + 0.5 * F.mse_loss(h, state, reduction="sum") / batch_size
+                    self._validate_shapes(h, state, f"Layer {state_idx} ({type(module).__name__})")
+                    E = E + 0.5 * self._safe_mse(h, state) / batch_size
                 
                 # The input to the next layer is the current state (relaxed variable)
                 prev = state
@@ -132,7 +133,8 @@ class EnergyFunction:
                 else:
                     h = module(prev)
                 
-                E = E + 0.5 * F.mse_loss(h, state, reduction="sum") / batch_size
+                self._validate_shapes(h, state, f"Attention Layer {state_idx}")
+                E = E + 0.5 * self._safe_mse(h, state) / batch_size
                 prev = state
                 state_idx += 1
             
@@ -159,6 +161,18 @@ class EnergyFunction:
         
         return E
     
+    def _validate_shapes(self, h: torch.Tensor, state: torch.Tensor, context: str) -> None:
+        """Ensure shapes match between prediction and state."""
+        if h.shape != state.shape:
+             raise ValueError(
+                f"Shape mismatch at {context}: Prediction {h.shape} vs State {state.shape}. "
+                "Check model architecture and layer types."
+             )
+
+    def _safe_mse(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+         """Compute MSE safely."""
+         return F.mse_loss(input, target, reduction="sum")
+
     def _kl_energy(
         self,
         state: torch.Tensor,
@@ -172,11 +186,7 @@ class EnergyFunction:
             E = D_KL(softmax(state) || softmax(prediction))
         """
         eps = 1e-8
-        # Ensure state and prediction have same shape
-        if state.shape != prediction.shape:
-            raise ValueError(
-                f"State shape {state.shape} does not match prediction shape {prediction.shape} for KL divergence."
-            )
+        self._validate_shapes(prediction, state, "KL Divergence")
 
         state_softmax = F.softmax(state / self.softmax_temperature, dim=-1)
         h_softmax = F.softmax(prediction / self.softmax_temperature, dim=-1)
@@ -211,4 +221,17 @@ class EnergyFunction:
             ) / batch_size
         else:
             # MSE for regression
+            # target_vec might need reshape to match output?
+            if output.shape != target_vec.shape:
+                # Try squeezing target_vec if it has extra dim 1
+                 if output.shape == target_vec.squeeze().shape:
+                     target_vec = target_vec.squeeze()
+                 elif output.squeeze().shape == target_vec.shape:
+                     output = output.squeeze()
+
+            if output.shape != target_vec.shape:
+                 raise ValueError(
+                    f"Shape mismatch in nudge term: Output {output.shape}, Target {target_vec.shape}"
+                )
+
             return beta * F.mse_loss(output, target_vec, reduction="sum") / batch_size

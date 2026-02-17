@@ -85,9 +85,9 @@ class EPGradient:
         self,
         model: nn.Module,
         x: torch.Tensor,
-        target: torch.Tensor,
-        energy_fn: Callable,
-        structure_fn: Callable,
+        target: Optional[torch.Tensor],
+        energy_fn: Optional[Callable] = None,
+        structure_fn: Optional[Callable] = None,
         **kwargs: Any
     ) -> None:
         """
@@ -100,6 +100,13 @@ class EPGradient:
             energy_fn: Function to compute energy given states.
             structure_fn: Function to extract model structure.
         """
+        if target is None:
+            raise ValueError("Target tensor is required for Equilibrium Propagation")
+        if energy_fn is None:
+            raise ValueError("energy_fn is required for Equilibrium Propagation")
+        if structure_fn is None:
+            raise ValueError("structure_fn is required for Equilibrium Propagation")
+
         structure = structure_fn(model)
         
         # Free phase (beta=0)
@@ -216,12 +223,19 @@ class LocalEPGradient:
         self,
         model: nn.Module,
         x: torch.Tensor,
-        target: torch.Tensor,
-        energy_fn: Callable,
-        structure_fn: Callable,
+        target: Optional[torch.Tensor],
+        energy_fn: Optional[Callable] = None,
+        structure_fn: Optional[Callable] = None,
         **kwargs: Any
     ) -> None:
         """Compute layer-local EP gradients."""
+        if target is None:
+            raise ValueError("Target tensor is required for Local Equilibrium Propagation")
+        if energy_fn is None:
+             raise ValueError("energy_fn is required for Local Equilibrium Propagation")
+        if structure_fn is None:
+             raise ValueError("structure_fn is required for Local Equilibrium Propagation")
+
         from ..settling import Settler
         
         structure = structure_fn(model)
@@ -365,12 +379,20 @@ class NaturalGradient:
             structure = structure_fn(model)
         
         # Compute base gradients
-        if energy_fn is not None and structure is not None:
-            self.base_strategy.compute_gradients(
-                model, x, target, energy_fn=energy_fn, structure_fn=structure_fn, **kwargs
-            )
-        else:
-            self.base_strategy.compute_gradients(model, x, target, **kwargs)
+        # Note: We must pass kwargs correctly to satisfy the base strategy
+        # If base strategy is EP, it needs energy_fn/structure_fn
+        # If base strategy is Backprop, it ignores them (or might complain if strict? but **kwargs should handle it)
+
+        # Prepare kwargs
+        call_kwargs = kwargs.copy()
+        if energy_fn is not None:
+            call_kwargs['energy_fn'] = energy_fn
+        if structure_fn is not None:
+            call_kwargs['structure_fn'] = structure_fn
+
+        self.base_strategy.compute_gradients(
+            model, x, target, **call_kwargs
+        )
         
         # Capture Fisher information for later use in update
         self._compute_fisher(model, x, target, energy_fn, structure)

@@ -27,11 +27,15 @@ class Settler:
         lr: float = 0.05,
         loss_type: str = "mse",
         softmax_temperature: float = 1.0,
+        tol: float = 1e-4,
+        patience: int = 5,
     ):
         self.steps = steps
         self.lr = lr
         self.loss_type = loss_type
         self.softmax_temperature = softmax_temperature
+        self.tol = tol
+        self.patience = patience
     
     def settle(
         self,
@@ -69,11 +73,14 @@ class Settler:
         states = self._capture_states(model, x, structure)
         
         if not states:
-            layer_count = sum(1 for item in structure if item["type"] == "layer")
-            raise RuntimeError(
-                f"No activations captured. Expected {layer_count} layer(s).\n"
-                f"Model: {type(model).__name__}, Structure: {len(structure)} items"
-            )
+            layer_count = sum(1 for item in structure if item["type"] in ("layer", "attention"))
+            if layer_count > 0:
+                 raise RuntimeError(
+                    f"No activations captured. Expected {layer_count} layer(s).\n"
+                    f"Model: {type(model).__name__}, Structure: {len(structure)} items"
+                )
+            else:
+                return [] # No states to settle
         
         # Prepare target
         target_vec = None
@@ -85,6 +92,7 @@ class Settler:
         
         # Settling loop
         prev_energy: Optional[float] = None
+        patience_counter = 0
         
         for step in range(self.steps):
             with torch.enable_grad():
@@ -97,6 +105,21 @@ class Settler:
                         f"Try reducing settle_lr, beta, or learning rate."
                     )
                 
+                # Adaptive settling check
+                current_energy = float(E.item())
+                if prev_energy is not None:
+                    delta = abs(current_energy - prev_energy)
+                    if delta < self.tol:
+                        patience_counter += 1
+                    else:
+                        patience_counter = 0
+
+                    if patience_counter >= self.patience:
+                        # Converged
+                        break
+
+                prev_energy = current_energy
+
                 grads = torch.autograd.grad(E, states, retain_graph=False, allow_unused=True)
             
             # SGD step with momentum
@@ -135,10 +158,13 @@ class Settler:
         states = self._capture_states_fresh(model, x, structure)
         
         if not states:
-            layer_count = sum(1 for item in structure if item["type"] == "layer")
-            raise RuntimeError(
-                f"No activations captured. Expected {layer_count} layer(s)."
-            )
+            layer_count = sum(1 for item in structure if item["type"] in ("layer", "attention"))
+            if layer_count > 0:
+                raise RuntimeError(
+                    f"No activations captured. Expected {layer_count} layer(s)."
+                )
+            else:
+                return []
         
         # Prepare target
         target_vec = None
@@ -150,6 +176,10 @@ class Settler:
         
         # Settling loop - states are optimized but remain connected to graph
         # through the energy computation which uses module(prev)
+
+        prev_energy: Optional[float] = None
+        patience_counter = 0
+
         for step in range(self.steps):
             # For settling, we need states that can receive gradients
             # Create working copies that require grad
@@ -160,6 +190,21 @@ class Settler:
             if torch.isnan(E) or torch.isinf(E):
                 raise RuntimeError(f"Energy diverged at step {step}: E={E.item()}")
             
+            # Adaptive settling check
+            current_energy = float(E.item())
+            if prev_energy is not None:
+                delta = abs(current_energy - prev_energy)
+                if delta < self.tol:
+                    patience_counter += 1
+                else:
+                    patience_counter = 0
+
+                if patience_counter >= self.patience:
+                    # Converged
+                    break
+
+            prev_energy = current_energy
+
             grads = torch.autograd.grad(E, working_states, retain_graph=False, allow_unused=True)
             
             # Update working states

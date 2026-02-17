@@ -21,6 +21,7 @@ from mep.optimizers import (
     SpectralConstraint,
     NoFeedback,
     ErrorFeedback,
+    GradientStrategy
 )
 
 
@@ -73,6 +74,8 @@ def smep(
     Returns:
         Configured CompositeOptimizer.
     """
+    gradient: GradientStrategy
+
     # Gradient strategy
     if mode == "ep":
         gradient = EPGradient(

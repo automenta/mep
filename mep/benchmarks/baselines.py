@@ -5,18 +5,19 @@ Provides factory function to get optimizer instances by name.
 Includes both standard PyTorch optimizers (baselines) and EP-based optimizers.
 """
 
-from typing import Tuple, Any
+from typing import Tuple, Any, Dict
+import torch.nn as nn
 import torch.optim as optim
 from mep import smep, sdmep, local_ep, natural_ep, muon_backprop
 
 
 def get_optimizer(
     name: str,
-    model: Any,
+    model: nn.Module,
     lr: float = 0.01,
     momentum: float = 0.9,
     weight_decay: float = 0.0005,
-    **kwargs
+    **kwargs: Any
 ) -> Tuple[Any, bool]:
     """
     Get optimizer by name.

@@ -6,7 +6,7 @@ Tools for monitoring and debugging Equilibrium Propagation training.
 
 import torch
 import torch.nn as nn
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass, field
 
 
@@ -54,35 +54,42 @@ class EPMonitor:
             print(f"Epoch {epoch}: Energy gap = {metrics.energy_gap:.4f}")
     """
     
-    def __init__(self):
+    def __init__(self) -> None:
         self.current_epoch: int = 0
         self.epoch_metrics: List[EpochMetrics] = []
         self.settling_history: List[EnergyMetrics] = []
         self._prev_weights: Dict[str, torch.Tensor] = {}
-        self._start_time: float = 0
+        self._start_time: Optional[Any] = None
     
     def start_epoch(self) -> None:
         """Mark the start of an epoch."""
         self.current_epoch += 1
         self.settling_history = []
-        self._start_time = torch.cuda.event() if torch.cuda.is_available() else None
+        if torch.cuda.is_available():
+            self._start_time = torch.cuda.Event(enable_timing=True)
+            self._start_time.record() # type: ignore
+        else:
+            self._start_time = None
     
     def record_settling_step(
         self,
         step: int,
         energy: float,
-        prev_energy: float,
+        prev_energy: Optional[float],
         states: List[torch.Tensor],
         grads: List[Optional[torch.Tensor]]
     ) -> EnergyMetrics:
         """Record metrics for a settling step."""
-        grad_norm = sum(g.norm().item() ** 2 for g in grads if g is not None) ** 0.5
-        state_norm = sum(s.norm().item() ** 2 for s in states) ** 0.5
+        grad_norm_sq = sum(g.norm().item() ** 2 for g in grads if g is not None)
+        grad_norm = float(grad_norm_sq) ** 0.5
+
+        state_norm_sq = sum(s.norm().item() ** 2 for s in states)
+        state_norm = float(state_norm_sq) ** 0.5
         
         metrics = EnergyMetrics(
             step=step,
             energy=energy,
-            energy_change=energy - prev_energy if prev_energy is not None else 0,
+            energy_change=energy - prev_energy if prev_energy is not None else 0.0,
             grad_norm=grad_norm,
             state_norm=state_norm
         )
@@ -93,8 +100,8 @@ class EPMonitor:
         self,
         model: nn.Module,
         optimizer: Any,
-        free_energy: float = None,
-        nudged_energy: float = None
+        free_energy: Optional[float] = None,
+        nudged_energy: Optional[float] = None
     ) -> EpochMetrics:
         """
         Mark the end of an epoch and compute metrics.
@@ -109,28 +116,29 @@ class EPMonitor:
             EpochMetrics for this epoch.
         """
         # Compute weight change
-        weight_change = 0.0
+        weight_change_sq = 0.0
         for name, param in model.named_parameters():
             if param.grad is not None:
                 if name in self._prev_weights:
-                    weight_change += (param.data - self._prev_weights[name]).norm().item() ** 2
+                    weight_change_sq += (param.data - self._prev_weights[name]).norm().item() ** 2
             self._prev_weights[name] = param.data.clone()
-        weight_change = weight_change ** 0.5
+        weight_change = float(weight_change_sq) ** 0.5
         
         # Compute gradient norm
-        grad_norm = sum(
+        grad_norm_sq = sum(
             p.grad.norm().item() ** 2 
             for p in model.parameters() 
             if p.grad is not None
-        ) ** 0.5
+        )
+        grad_norm = float(grad_norm_sq) ** 0.5
         
         # Energy gap
-        energy_gap = (nudged_energy - free_energy) if (free_energy is not None and nudged_energy is not None) else 0
+        energy_gap = (nudged_energy - free_energy) if (free_energy is not None and nudged_energy is not None) else 0.0
         
         metrics = EpochMetrics(
             epoch=self.current_epoch,
-            free_energy=free_energy or 0,
-            nudged_energy=nudged_energy or 0,
+            free_energy=free_energy or 0.0,
+            nudged_energy=nudged_energy or 0.0,
             energy_gap=energy_gap,
             gradient_norm=grad_norm,
             weight_change=weight_change,
@@ -167,7 +175,7 @@ class EPMonitor:
         """Get energy values across all settling steps in current epoch."""
         return [m.energy for m in self.settling_history]
     
-    def plot_energy(self, ax=None):
+    def plot_energy(self, ax: Optional[Any] = None) -> Any:
         """Plot energy convergence for current epoch."""
         if ax is None:
             import matplotlib.pyplot as plt
@@ -230,6 +238,17 @@ def monitor_ep_training(
         for x, y in train_loader:
             x, y = x.to(device), y.to(device)
             optimizer.step(x=x, target=y)
+            # Should call end_epoch or update metrics?
+            # The original code only called start_epoch and nothing else inside loop.
+            # Assuming optimizer updates are tracked via hooks or similar?
+            # EPMonitor doesn't seem to hook into optimizer automatically.
+            # The usage example says: metrics = monitor.end_epoch(model, optimizer)
+            # But monitor_ep_training doesn't call it.
+            # I will assume this function is incomplete or simplified example.
+            pass
+
+        # End of epoch
+        monitor.end_epoch(model, optimizer)
         
         if verbose:
             print(f"Epoch {epoch + 1}/{epochs} completed")

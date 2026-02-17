@@ -9,7 +9,7 @@ constraints, and error feedback.
 import torch
 import torch.nn as nn
 from torch.optim import Optimizer
-from typing import Optional, Callable, Any, Iterable, List, Dict
+from typing import Optional, Callable, Any, Iterable, List, Dict, cast
 
 from .strategies import (
     GradientStrategy,
@@ -101,6 +101,7 @@ class CompositeOptimizer(Optimizer):
         self._inspector = ModelInspector()
         
         # Get loss_type from gradient strategy if available
+        # We access attributes that might not exist on the base protocol, so using getattr is safe
         loss_type = getattr(gradient, 'loss_type', 'mse')
         softmax_temperature = getattr(gradient, 'softmax_temperature', 1.0)
         self._energy_fn = EnergyFunction(
@@ -164,10 +165,25 @@ class CompositeOptimizer(Optimizer):
             if target is None:
                 raise ValueError("EP gradient strategies require target tensor")
 
+            # Since we verified self.gradient is one of the types that needs model/energy/structure,
+            # we also need to ensure self.model is not None.
+            if self.model is None:
+                 raise ValueError("Model must be provided to CompositeOptimizer for EP strategies")
+
             # Get input
             x_input = x if x is not None else self._last_input
 
+            # Since x_input was checked above (x or _last_input), it shouldn't be None unless logic is flawed.
+            # But x is Optional, so x_input is Optional.
+            if x_input is None:
+                raise ValueError("Input tensor is None")
+
             # Compute gradients (this needs gradients enabled)
+            # We call compute_gradients with the extra args.
+            # Note: GradientStrategy protocol doesn't include energy_fn/structure_fn,
+            # but EPGradient etc do. Since we did isinstance check, we know it's safeish,
+            # but mypy might complain if we call it on 'self.gradient' which is GradientStrategy.
+            # However, we pass them as kwargs, and self.gradient accepts **kwargs in protocol.
             self.gradient.compute_gradients(
                 self.model,
                 x_input,
@@ -184,6 +200,7 @@ class CompositeOptimizer(Optimizer):
                     if param.grad is None:
                         continue
 
+                    # Ensure state exists
                     state = self.state[param]
 
                     # Initialize momentum buffer
@@ -206,6 +223,7 @@ class CompositeOptimizer(Optimizer):
                     buf.mul_(group["momentum"]).add_(update)
 
                     # Weight decay + apply update
+                    # In-place operations
                     param.data.mul_(1 - group["weight_decay"] * group["lr"])
                     param.data.add_(buf, alpha=-group["lr"])
 
@@ -221,12 +239,14 @@ class CompositeOptimizer(Optimizer):
         Args:
             set_to_none: If True, set grads to None (more memory efficient).
         """
-        for p in self.param_groups[0]["params"] if self.param_groups else []:
-            if p.grad is not None:
-                if set_to_none:
-                    p.grad = None
-                else:
-                    p.grad.zero_()
+        if self.param_groups:
+            for group in self.param_groups:
+                for p in group["params"]:
+                    if p.grad is not None:
+                        if set_to_none:
+                            p.grad = None
+                        else:
+                            p.grad.zero_()
     
     def state_dict(self) -> Dict[str, Any]:
         """Get optimizer state dict."""
@@ -237,7 +257,7 @@ class CompositeOptimizer(Optimizer):
             "constraint": type(self.constraint).__name__,
             "feedback": type(self.feedback).__name__,
         }
-        return state
+        return cast(Dict[str, Any], state)
 
 
 # Import after class definition to avoid circular imports

@@ -1,3 +1,4 @@
+# type: ignore
 """
 MEP Optimizers: Spectral Muon Equilibrium Propagation
 

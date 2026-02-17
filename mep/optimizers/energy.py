@@ -65,10 +65,19 @@ class EnergyFunction:
         prev = x
         state_idx = 0
         
-        # Find layer modules for identifying last layer
-        layer_modules = [item["module"] for item in structure if item["type"] == "layer"]
-        last_layer_idx = len(layer_modules) - 1
+        # Find all modules that produce a state (layer or attention)
+        state_producing_modules = [
+            item for item in structure
+            if item["type"] in ("layer", "attention")
+        ]
+        num_states = len(state_producing_modules)
         
+        if len(states) != num_states:
+            raise ValueError(
+                f"Number of states ({len(states)}) does not match number of state-producing layers ({num_states}). "
+                f"Structure has {len(structure)} items."
+            )
+
         for item in structure:
             item_type = item["type"]
             module = item["module"]
@@ -78,16 +87,19 @@ class EnergyFunction:
                     break
                 
                 state = states[state_idx]
-                is_last_layer = (state_idx == last_layer_idx)
+                is_last_state = (state_idx == num_states - 1)
+
+                # Compute prediction from previous layer
                 h = module(prev)
                 
-                if use_classification and is_last_layer:
+                if use_classification and is_last_state:
                     # KL divergence for classification output
                     E = E + self._kl_energy(state, h, batch_size)
                 else:
                     # MSE for hidden layers and regression
                     E = E + 0.5 * F.mse_loss(h, state, reduction="sum") / batch_size
                 
+                # The input to the next layer is the current state (relaxed variable)
                 prev = state
                 state_idx += 1
             
@@ -105,21 +117,34 @@ class EnergyFunction:
                 
                 if isinstance(module, nn.MultiheadAttention):
                     try:
+                        # For MHA, we usually use the first output (attn_output)
+                        # Assuming self-attention: query=key=value=prev
+                        # Note: MHA expects (L, N, E) or (N, L, E) depending on batch_first.
+                        # We assume inputs are compatible.
                         h = module(prev, prev, prev, need_weights=False)[0]
                     except (RuntimeError, AssertionError):
-                        prev = state
-                        state_idx += 1
-                        continue
+                        # Fallback if shapes don't match or other error
+                        # Use state as placeholder to continue flow?
+                        # Or raise error? raising is better for robustness.
+                        # But for now let's assume it works or use prev.
+                        # Actually, if we fail to compute h, energy computation is invalid.
+                        raise RuntimeError("Failed to compute MultiheadAttention output during energy calculation.")
                 else:
                     h = module(prev)
                 
                 E = E + 0.5 * F.mse_loss(h, state, reduction="sum") / batch_size
-                prev = h
+                prev = state
                 state_idx += 1
             
             elif item_type == "act":
                 prev = module(prev)
-        
+
+            elif item_type == "dropout":
+                 prev = module(prev)
+
+            elif item_type == "flatten":
+                prev = module(prev)
+
         # Nudge term
         if target_vec is not None and beta > 0:
             E = E + self._nudge_term(prev, target_vec, beta, batch_size)
@@ -147,6 +172,12 @@ class EnergyFunction:
             E = D_KL(softmax(state) || softmax(prediction))
         """
         eps = 1e-8
+        # Ensure state and prediction have same shape
+        if state.shape != prediction.shape:
+            raise ValueError(
+                f"State shape {state.shape} does not match prediction shape {prediction.shape} for KL divergence."
+            )
+
         state_softmax = F.softmax(state / self.softmax_temperature, dim=-1)
         h_softmax = F.softmax(prediction / self.softmax_temperature, dim=-1)
         
@@ -170,6 +201,11 @@ class EnergyFunction:
         """
         if self.loss_type == "cross_entropy":
             # target_vec contains class indices
+            if output.shape[0] != target_vec.shape[0]:
+                raise ValueError(
+                    f"Batch size mismatch: Output {output.shape[0]}, Target {target_vec.shape[0]}"
+                )
+
             return beta * F.cross_entropy(
                 output, target_vec, reduction="sum", label_smoothing=0.1
             ) / batch_size

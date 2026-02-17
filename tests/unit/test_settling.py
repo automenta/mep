@@ -35,9 +35,6 @@ def test_settle_adaptive_stopping(device):
         patience=patience
     )
 
-    # We can't easily count steps inside settle, but we can check if it returns.
-    # To verify it stopped early, we can subclass or mock energy_fn to count calls.
-
     call_count = 0
     original_call = energy_fn.__call__
 
@@ -46,14 +43,43 @@ def test_settle_adaptive_stopping(device):
         call_count += 1
         return original_call(*args, **kwargs)
 
-    energy_fn_mock = mocked_call
-
     # Settle
-    settled = settler.settle(model, x, target=None, beta=0.0, energy_fn=energy_fn_mock, structure=structure)
+    settler.settle(model, x, target=None, beta=0.0, energy_fn=mocked_call, structure=structure)
 
     assert call_count < max_steps, f"Settler should have stopped early (steps: {call_count} vs max: {max_steps})"
     assert call_count > patience, f"Settler should run at least patience steps (steps: {call_count})"
 
+
+def test_settle_adaptive_step_size(device):
+    """Test that adaptive step size logic works (does not crash and converges)."""
+    model = nn.Sequential(
+        nn.Linear(10, 10),
+        nn.Tanh(),
+        nn.Linear(10, 2)
+    ).to(device)
+
+    energy_fn = EnergyFunction()
+    inspector = ModelInspector()
+    structure = inspector.inspect(model)
+
+    x = torch.randn(4, 10, device=device)
+
+    # Use adaptive step size
+    settler = Settler(
+        steps=50,
+        lr=0.5, # High LR to trigger rejection
+        adaptive=True
+    )
+
+    # We want to check if it converges without diverging (NaN)
+    # High LR without adaptive would likely oscillate or diverge
+
+    states = settler.settle(model, x, target=None, beta=0.0, energy_fn=energy_fn, structure=structure)
+
+    assert len(states) == 2
+    for s in states:
+        assert not torch.isnan(s).any()
+        assert not torch.isinf(s).any()
 
 def test_settle_divergence(device):
     """Test that settler raises RuntimeError on divergence (NaN/Inf)."""
@@ -112,10 +138,5 @@ def test_settle_with_graph_adaptive(device):
     )
 
     assert call_count < max_steps, f"Settler should have stopped early (steps: {call_count})"
-
-    # Check that states require grad (except they are returned detached)
-    # Wait, settle_with_graph returns detached states?
-    # docstring says: "Return detached states."
-    # But internally it maintains graph.
     for s in settled_states:
-        assert not s.requires_grad # Because returned list is detached
+        assert not s.requires_grad

@@ -67,6 +67,9 @@ class EPGradient:
         settle_lr: float = 0.05,
         loss_type: str = "mse",
         softmax_temperature: float = 1.0,
+        tol: float = 1e-4,
+        patience: int = 5,
+        adaptive: bool = False,
     ):
         if not (0 < beta <= 1):
             raise ValueError(f"Beta must be in (0, 1], got {beta}")
@@ -80,6 +83,9 @@ class EPGradient:
         self.settle_lr = settle_lr
         self.loss_type = loss_type
         self.softmax_temperature = softmax_temperature
+        self.tol = tol
+        self.patience = patience
+        self.adaptive = adaptive
     
     def compute_gradients(
         self,
@@ -144,6 +150,9 @@ class EPGradient:
             lr=self.settle_lr,
             loss_type=self.loss_type,
             softmax_temperature=self.softmax_temperature,
+            tol=self.tol,
+            patience=self.patience,
+            adaptive=self.adaptive,
         )
         return settler.settle(model, x, target, beta, energy_fn, structure)
     
@@ -213,11 +222,19 @@ class LocalEPGradient:
         settle_steps: int = 20,
         settle_lr: float = 0.05,
         loss_type: str = "mse",
+        softmax_temperature: float = 1.0,
+        tol: float = 1e-4,
+        patience: int = 5,
+        adaptive: bool = False,
     ):
         self.beta = beta
         self.settle_steps = settle_steps
         self.settle_lr = settle_lr
         self.loss_type = loss_type
+        self.softmax_temperature = softmax_temperature
+        self.tol = tol
+        self.patience = patience
+        self.adaptive = adaptive
     
     def compute_gradients(
         self,
@@ -243,6 +260,10 @@ class LocalEPGradient:
             steps=self.settle_steps,
             lr=self.settle_lr,
             loss_type=self.loss_type,
+            softmax_temperature=self.softmax_temperature,
+            tol=self.tol,
+            patience=self.patience,
+            adaptive=self.adaptive,
         )
         
         # Free phase

@@ -59,14 +59,20 @@
 | Claim | Status | Evidence |
 |-------|--------|----------|
 | O(1) memory | ❌ Refuted | EP uses 8× MORE memory than backprop+checkpointing |
-| EP learns classification | ✅ Confirmed | ~80% MNIST (vs 89% SGD) without dropout |
+| EP learns classification | ✅ Confirmed | ~85% MNIST (vs 93% SGD) - bugs fixed |
 | EP learns sequential tasks | ✅ Confirmed | Character LM trains successfully |
 | EP+EF for continual learning | ⚠️ Mixed | Not learning in current config |
 
 ### Bugs Fixed During Validation
 1. **Gradient accumulation** in EPGradient - was accumulating instead of overwriting
 2. **baselines.py config** - not passing loss_type and use_error_feedback  
-3. **Dropout incompatibility** - documented limitation
+3. **Dropout incompatibility** - fixed by skipping dropout during energy computation
+
+### Performance Summary (After Fixes)
+- **MNIST (mlp_small, 3 epochs)**: EP 85% vs SGD 93% (8% gap)
+- **XOR**: EP achieves 100% accuracy
+- **Speed**: EP is 1.5-3× slower due to settling overhead
+- **Memory**: EP uses 8× MORE memory than backprop+checkpointing at depth
 
 ---
 

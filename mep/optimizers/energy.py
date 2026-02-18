@@ -82,17 +82,17 @@ class EnergyFunction:
         for item in structure:
             item_type = item["type"]
             module = item["module"]
-            
+
             if item_type == "layer":
                 if state_idx >= len(states):
                     break
-                
+
                 state = states[state_idx]
                 is_last_state = (state_idx == num_states - 1)
 
                 # Compute prediction from previous layer
                 h = module(prev)
-                
+
                 if use_classification and is_last_state:
                     # KL divergence for classification output
                     # Cast h to float32 for stable energy calculation
@@ -102,24 +102,27 @@ class EnergyFunction:
                     self._validate_shapes(h, state, f"Layer {state_idx} ({type(module).__name__})")
                     # Compute MSE in float32
                     E = E + 0.5 * self._safe_mse(h.float(), state.float()) / batch_size
-                
+
                 # The input to the next layer is the current state (relaxed variable)
                 # Ensure dtype matches input x to prevent type mismatch with weights
                 # (especially when states were settled in AMP but contrast runs in FP32)
                 prev = state.to(x.dtype)
                 state_idx += 1
-            
+
             elif item_type == "norm":
                 prev = module(prev)
-            
+
             elif item_type == "pool":
                 prev = module(prev)
-            
+
             elif item_type == "flatten":
                 prev = module(prev)
 
             elif item_type == "dropout":
-                prev = module(prev)
+                # Skip dropout during energy computation - it breaks settling convergence
+                # because stochastic masking prevents finding a fixed point
+                # Dropout should only be used during standard forward passes, not EP settling
+                pass
 
             elif item_type == "attention":
                 if state_idx >= len(states):

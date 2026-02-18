@@ -2,7 +2,17 @@
 
 ## Strategic Priorities for Maximizing Impact
 
-**Status:** TODO.md complete. Core functionality implemented and tested. Focus now shifts to **demonstrating unique value**.
+**Status:** TODO.md complete. Core functionality implemented and tested.
+
+**Current Focus:** 
+- Validate theoretical advantages (O(1) memory, continual learning) with proper experimental design
+- Document EP's qualitative differences from backpropagation
+- Identify research niches where EP's unique properties matter
+
+**Note on Validation Studies:** Initial measurements had methodological limitations. Proper validation requires:
+- Memory: Gradient checkpointing at extreme depths (1000+ layers), measuring activations only
+- Continual learning: Sequential training on single model with proper forgetting metrics
+- Both outcomes (confirmation or refutation) are valuable research contributions
 
 ---
 
@@ -25,7 +35,7 @@
 | Working examples | ✅ | `quickstart.py`, `mnist_comparison.py`, `train_char_lm.py` |
 | Error feedback fix | ✅ | Works correctly with Dion, disabled for Muon |
 
-**MNIST Result:** ~89% test accuracy with EP (vs ~92% backprop)
+**Functional Status:** EP trains classification models with proper gradient flow through all layers.
 
 **Note:** Transformer architecture support exists, but full transformer-based LM training (e.g., nanoGPT-style) remains to be validated as part of the Character LM goal.
 
@@ -33,116 +43,112 @@
 
 ## 🎯 Immediate Priorities (Week 1-2)
 
-### 1. Prove Memory Advantage [HIGHEST PRIORITY]
+### 1. Proper Memory Validation [HIGH PRIORITY]
 
-**Why:** EP's O(1) memory claim is theoretical. This is EP's clearest quantitative advantage over backprop.
+**Why:** Initial measurement was methodologically flawed. Need to properly validate O(1) claim using bioplausible's approach.
 
 **What:**
 ```python
-# examples/memory_comparison.py
-# Train networks of increasing depth (10, 50, 100, 200, 500 layers)
-# Measure: peak memory, training stability, final accuracy
-# Find the depth where backprop OOMs but EP succeeds
+# Proper validation:
+# - Use gradient checkpointing to isolate activation memory
+# - Test at extreme depths (1000, 2000, 5000+ layers)
+# - Compare activation memory only, not total memory
+# - Follow bioplausible Track 35 methodology
 ```
 
 **Success criteria:**
-- [ ] EP trains a network that backprop cannot (CUDA OOM)
-- [ ] Memory vs depth plot showing O(1) vs O(depth) scaling
-- [ ] Document the crossover point (e.g., "EP uses 50% less memory at 100 layers")
-
-**Impact:** If true, this is a unique, defensible advantage.
-
-**Effort:** 2-3 days
-
----
-
-### 2. Validate Continual Learning with Working EF
-
-**Why:** This is EP's claimed "killer app" but needs proof with the fixed error feedback.
-
-**What:**
-```bash
-python -m mep.benchmarks.continual_learning
-# Permuted MNIST: 5+ tasks
-# Compare: EP+EF vs EP-without-EF vs SGD
-# Metric: average forgetting, final accuracy
-```
-
-**Success criteria:**
-- [ ] Benchmark runs end-to-end without errors
-- [ ] EP+EF shows reduced forgetting vs EP-without-EF
-- [ ] Results are reproducible across seeds
-
-**Impact:** Validates the continual learning hypothesis.
+- [ ] Replicate bioplausible's 19.4× savings at depth 100 (or document why different)
+- [ ] Show activation memory scales O(1) for EP vs O(depth) for backprop
+- [ ] Identify crossover point where EP's advantage becomes significant
 
 **Effort:** 3-5 days
 
 ---
 
-### 3. Validate Character LM Example
+### 2. Proper Continual Learning Benchmark [HIGH PRIORITY]
 
-**Why:** Shows EP works beyond classification, on sequential prediction tasks.
+**Why:** Preliminary test was invalid (reinitialized model per task = not continual learning).
+
+**What:**
+```python
+# Correct CL design:
+model = initialize_once()
+for task in tasks:
+    train_on_task(model, task)  # Same model, sequential
+    for prev_task in tasks[:current]:
+        measure_accuracy(model, prev_task)  # Measure forgetting
+```
+
+**Success criteria:**
+- [ ] Single model trained sequentially on 5+ tasks
+- [ ] Proper forgetting metric (accuracy drop on previous tasks)
+- [ ] Compare EP+EF vs EP-without-EF vs backprop vs EWC
+
+**Effort:** 3-5 days
+
+---
+
+### 3. Character LM Example [VALIDATION]
+
+**Why:** Demonstrates EP works on sequential prediction tasks, not just classification.
 
 **What:**
 ```bash
 python examples/train_char_lm.py
-# Train EP and backprop on Shakespeare character LM
-# Compare: loss curves, generated text quality, training dynamics
+# Compare EP vs backprop on Shakespeare character LM
+# Document qualitative differences in learning dynamics
 ```
 
 **Success criteria:**
 - [ ] Script runs without errors
-- [ ] Generated text shows learning (coherent characters)
-- [ ] Document qualitative differences (EP vs backprop outputs)
+- [ ] Generated text shows coherent learning
+- [ ] Document how EP's dynamics differ from BPTT
 
-**Follow-up:** Extend to transformer-based LM (e.g., nanoGPT-style) to demonstrate EP works with attention architectures.
-
-**Impact:** Demonstrates EP's applicability to language tasks and transformer architectures.
-
-**Effort:** 1-2 days (LSTM), 1-2 weeks (transformer extension)
+**Effort:** 1-2 days
 
 ---
 
-### 4. Write "Why EP?" Guide
+### 4. Document EP's Qualitative Value [IMPORTANT]
 
-**Why:** Users need honest guidance on when EP is worth the complexity.
+**Why:** EP's value isn't just "beating backprop on benchmarks." It's about:
+- Biological plausibility (no weight transport problem)
+- Energy-based formulation (different theoretical framework)
+- Neuromorphic compatibility (natural fit for analog hardware)
+- Research tool (study alternative learning mechanisms)
 
-**What:** Add to README or create standalone doc:
-- When to use EP (memory-constrained, continual learning, research)
-- When NOT to use EP (standard classification, production, speed-critical)
-- EP's unique characteristics vs backprop (already started in README)
+**What:** Update README with honest, constructive positioning:
+- When EP is useful (research, neuromorphic, memory-constrained)
+- When backprop is better (production, speed-critical, standard tasks)
+- EP's unique characteristics and research value
 
-**Success criteria:**
-- [ ] Clear decision tree for users
-- [ ] Honest about tradeoffs
-- [ ] Links to relevant examples
-
-**Effort:** 1 day
+**Effort:** 1-2 days
 
 ---
 
-## 🚀 Medium-Term Priorities (Month 1-2)
+## 🚀 Medium-Term Priorities (Month 1-2) - CONTINGENT
 
-### 5. Deep Network Scaling Study
+*These priorities depend on the outcome of Immediate Priorities 1-3.*
 
-**Why:** If EP's memory advantage is real, it should enable training deeper networks.
+### 4. Deep Network Scaling Study [IF memory shows promise]
+
+**Why:** Initial memory test showed 0% savings, but activation-only measurement may tell different story.
 
 **What:**
-- Train ResNet-style networks at depths: 10, 50, 100, 200, 500 layers
-- Measure: training stability, final accuracy, memory, time
-- Compare EP vs backprop at each depth
-
-**Hypothesis:** EP's advantage grows with depth.
+- Measure activation memory only (exclude weights)
+- Use gradient checkpointing baseline for fair comparison
+- Test at extreme depths (1000+ layers)
 
 **Success criteria:**
-- [ ] EP successfully trains networks where backprop fails or is unstable
-- [ ] Document depth limits for both methods
+- [ ] EP shows >30% activation memory savings
+- [ ] Savings increase with depth
 
-**Effort:** 1-2 weeks (compute time)
+**If negative:** Memory advantage claim should be abandoned.
+
+**Effort:** 1 week
 
 ---
 
-### 6. Add Proper Baselines to Benchmarks
+### 5. Add Proper Baselines to Benchmarks [ALWAYS NEEDED]
 
 **Why:** Current benchmarks compare EP to... itself. Need external baselines.
 
@@ -159,75 +165,66 @@ python examples/train_char_lm.py
 
 ---
 
-### 7. Publish Results (If Warranted)
+### 6. Publish Results (Honest Assessment) [ALWAYS NEEDED]
 
-**Why:** If any of the above shows EP has unique value, share it.
+**Why:** The community needs honest information about EP's tradeoffs.
 
 **What:**
-- Workshop paper (NeurIPS, ICLR, ICML)
-- Blog post with interactive notebooks
-- Conference talk
+- Technical report with all findings (positive and negative)
+- Blog post explaining when EP is/isn't appropriate
+- Open discussion with EP research community
 
 **Success criteria:**
-- [ ] Clear contribution (e.g., "EP enables X that backprop cannot")
-- [ ] Reproducible experiments
-- [ ] Open-source code release
+- [ ] Honest, reproducible results published
+- [ ] Clear guidance for practitioners
+- [ ] Community feedback incorporated
 
 **Effort:** 2-4 weeks
 
 ---
 
-## 🏗️ Long-Term Priorities (Month 3+)
+## 🏗️ Long-Term Priorities (Month 3+) - CONTINGENT
 
-### 8. Find a Domain Where EP Wins
+*These priorities depend on validation study outcomes.*
 
-**Candidates:**
-| Domain | Hypothesis | Validation Needed |
+### 7. Find Domains Where EP Excels [RESEARCH FOCUS]
+
+**Goal:** Identify practical niches where EP's unique properties provide advantages.
+
+**Candidate domains to investigate:**
+| Domain | Hypothesis | Validation Status |
 |--------|------------|-------------------|
-| Continual learning | EP+EF reduces forgetting | Benchmark vs EWC, GEM |
-| Memory-constrained | EP trains larger models | Memory scaling study |
-| Edge devices | EP fits on-device | Deployment demo |
-| Privacy-preserving | No stored activations | Formal analysis |
-| Neuromorphic hardware | Natural fit | Partnership required |
+| Continual learning | EP+EF reduces forgetting | Needs proper benchmark |
+| Memory-constrained | O(1) activation storage enables deeper nets | Needs proper validation |
+| Edge devices | Lower memory = fits on-device | Untested |
+| Privacy-preserving | No stored activations | Theoretical only |
+| Neuromorphic hardware | Local rules match analog substrates | Requires partnership |
 
 **Success criteria:**
-- [ ] One domain where EP has clear, reproducible advantage
+- [ ] One or more domains with clear, reproducible advantage
 - [ ] Published results or demo
+
+**If no quantitative advantage found:** EP still provides value as research/educational tool for studying alternative learning mechanisms.
 
 **Effort:** 2-3 months
 
 ---
 
-### 9. PyTorch Lightning Integration [OPTIONAL]
+### 8. PyTorch Lightning Integration [LOW PRIORITY]
 
-**Status:** Not implemented. Consider if community interest emerges.
+**Status:** Not implemented. Low priority until core value is proven.
 
-**What:**
-```python
-# Target API (if implemented)
-from lightning.pytorch import LightningModule
-from mep.integrations import MEPOptimizer
-
-class MyModel(LightningModule):
-    def configure_optimizers(self):
-        return smep(self.parameters(), model=self, mode='ep')
-```
-
-**Rationale:** Only worth the effort if MEP gains adoption and users request it. Not prioritized until core value is proven.
+**Rationale:** Only worth the effort if MEP gains adoption.
 
 **Effort:** 2-3 days (if/when needed)
 
 ---
 
-### 10. Advanced CUDA Optimization [ON HOLD]
+### 9. Advanced CUDA Optimization [ON HOLD]
 
-**Status:** Fused settling kernel implemented (`fused_settle_step_inplace`). Further optimization deferred.
+**Status:** Fused settling kernel implemented. Further optimization deferred.
 
-**What could be added:**
-- Custom SVD kernel for Dion
-- Mixed-precision settling
-
-**Rationale:** Don't optimize until we know EP has a use case worth optimizing for. Current 1.5× slowdown is acceptable for research.
+**Rationale:** Don't optimize until we know EP has a use case worth optimizing for.
 
 **Effort:** 4-8 weeks (if/when needed)
 
@@ -239,48 +236,27 @@ class MyModel(LightningModule):
 Impact
   ▲
   │    ┌─────────────────┐    ┌──────────────┐
-  │    │ 1. Memory       │    │ 8. Domain    │
-  │    │    Advantage    │    │    Where EP  │
-  │    │ 2. Continual    │    │    Wins      │
-  │    │    Learning     │    │ 9. Lightning │
-  │    │ 5. Deep Scaling │    │    (optional)│
-  │    └─────────────────┘    │ 10. CUDA     │
-  │    ┌─────────────┐        │     Opt.     │
-  │    │ 3. Char LM  │        └──────────────┘
-  │    │ 4. Why EP?  │
+  │    │ 1. Memory       │    │ 7. Domain    │
+  │    │    Validation   │    │    Where EP  │
+  │    │    (proper)     │    │    Wins      │
+  │    │ 2. CL Benchmark │    │ 8. Lightning │
+  │    │    (proper)     │    │    (low pri) │
+  │    │ 5. Deep Scaling │    │ 9. CUDA Opt  │
+  │    └─────────────────┘    │    (on hold) │
+  │    ┌─────────────┐        └──────────────┘
+  │    │ 3. Char LM  │
+  │    │ 4. Qual     │
   │    │ 6. Baselines│
   │    │ 7. Publish  │
   │    └─────────────┘
   │
   └──────────────────────────────────────► Effort
        Low                    High
+
+Note: Priorities are research-focused.
+      Validation studies may confirm or refute claims.
+      Both outcomes are valuable contributions.
 ```
-
----
-
-## 🎯 Recommended Sequence
-
-### Phase 1: Prove Value (Weeks 1-2)
-1. Memory advantage demonstration
-2. Continual learning validation
-3. Character LM example (includes transformer extension)
-4. "Why EP?" documentation
-
-**Goal:** Establish clear, honest value proposition
-
-### Phase 2: Deepen Evidence (Weeks 3-8)
-5. Deep network scaling study
-6. Add proper baselines
-7. Publish results (if warranted)
-
-**Goal:** Build credible evidence for EP's niche
-
-### Phase 3: Expand Impact (Months 3-6)
-8. Find domain where EP wins
-9. Community building
-10. Lightning/CUDA optimization (if value proven and users request)
-
-**Goal:** Establish MEP as the go-to EP framework
 
 ---
 
@@ -288,80 +264,113 @@ Impact
 
 | Metric | Current | Target (3mo) | Target (12mo) |
 |--------|---------|--------------|---------------|
-| Working examples | 4 | 6 | 10+ |
-| Documented use cases | 1 (classification) | 3 | 5+ |
+| Working examples | 5 | 8 | 15+ |
+| Documented use cases | 1 (classification) | 3 (CL, LM, memory) | 5+ |
 | External contributors | 0 | 1+ | 5+ |
-| GitHub Stars | ~0 | 50+ | 200+ |
-| Citations | 0 | 1+ | 10+ |
+| GitHub Stars | ~0 | 100+ | 500+ |
+| Citations | 0 | 2+ (methods paper) | 20+ |
 | EP Speed (vs backprop) | ~1.5× slower | ~1.5× slower | ~1.2× slower |
-| Memory advantage | Unproven | Demonstrated | Quantified |
-| Continual learning | Unproven | Validated | Competitive |
+| Memory validation | Inconclusive | Proper validation study | Quantified results |
+| CL validation | Invalid test | Proper benchmark | Competitive results |
 
 ---
 
-## 🔍 Research Questions to Answer
+## 🔍 Research Questions
 
-1. **Does EP's O(1) memory enable training deeper networks?** ← Immediate focus
-2. **Does EP+EF reduce catastrophic forgetting?** ← Immediate focus
-3. **What domains benefit from EP's qualitative differences?** ← Medium-term
-4. **Is EP's speed penalty acceptable for its advantages?** ← Ongoing
-5. **Does biological plausibility matter practically?** ← Long-term
+1. **Does EP's O(1) activation memory enable training deeper networks?** ← Needs proper validation
+2. **Does EP+EF reduce catastrophic forgetting?** ← Needs proper CL benchmark
+3. **What qualitative differences does EP exhibit?** ← Document learning dynamics
+4. **When is EP preferable to backprop?** ← Identify niches
+5. **Does biological plausibility matter practically?** ← Long-term question
 
 ---
 
 ## 🤝 Collaboration Opportunities
 
-| Domain | Potential Partners | Priority |
-|--------|-------------------|----------|
-| Continual Learning | CL research groups | High |
-| Memory-Efficient DL | Systems/ML groups | High |
-| Energy-Based Models | Yann LeCun's group | Medium |
-| Neuromorphic Hardware | Intel Labs, SpiNNaker | Low (until software value proven) |
+| Domain | Potential Partners | Priority | Status |
+|--------|-------------------|----------|--------|
+| Continual Learning | CL research groups | High | Need proper benchmark |
+| Memory-Efficient DL | Systems/ML groups | High | Compare with gradient checkpointing |
+| Neuromorphic Hardware | Intel Labs, SpiNNaker | Medium | After software validation |
+| Energy-Based Models | Yann LeCun's group | Medium | Theoretical alignment |
+| ML Education | Universities | Medium | As teaching tool |
 
 ---
 
-## 📝 Immediate Action Items
+## 📝 Action Items
 
 ### This Week
-- [ ] Create `examples/memory_comparison.py`
-- [ ] Run and validate `examples/train_char_lm.py`
-- [ ] Run continual learning benchmark with fixed EF
+- [ ] Design proper memory validation (gradient checkpointing, 1000+ layers)
+- [ ] Implement proper CL benchmark (sequential, forgetting metric)
+- [ ] Run `examples/train_char_lm.py`
+- [ ] Update README with qualitative value documentation
 
 ### This Month
-- [ ] Complete memory advantage demonstration
-- [ ] Write "Why EP?" guide
-- [ ] Add SGD/Adam baselines to benchmarks
+- [ ] Complete memory validation study
+- [ ] Complete CL benchmark with baselines
+- [ ] Document EP's qualitative differences
+- [ ] Community feedback on findings
 
 ### This Quarter
-- [ ] Deep network scaling study
-- [ ] Publish results (if value demonstrated)
-- [ ] Community outreach (blog, social)
+- [ ] Publish validation results (positive or negative)
+- [ ] Identify EP's niches (if any)
+- [ ] Build community around research use cases
 
 ---
 
 ## 💡 Final Thought
 
-**The goal is not to replace backpropagation.** The goal is to:
-1. Enable biologically plausible learning research
-2. Find niches where EP excels (memory, continual learning, hardware)
-3. Push the boundaries of what's possible with local learning rules
+**The goal is not to replace backpropagation.** Backprop works exceptionally well for standard deep learning.
 
-**Success = MEP becomes the go-to framework for EP research, with clear evidence of when and why to use it.**
+**The goal IS to:**
+1. Enable biologically plausible learning research
+2. Provide tools for studying alternative learning mechanisms
+3. Explore niches where EP's unique properties matter (neuromorphic, memory-constrained, continual learning)
+4. Demonstrate that effective deep learning doesn't require backpropagation
+
+**What We've Built:** A functional, well-tested EP implementation with modern features (adaptive settling, AMP, torch.compile) and comprehensive test coverage.
+
+**What We're Studying:** Whether EP's theoretical advantages (O(1) memory, reduced forgetting) translate to practice, and what qualitative differences emerge from EP's contrastive learning mechanism.
+
+**Value Regardless:** Even if EP doesn't "beat" backprop on standard benchmarks, it provides:
+- A research tool for studying biologically plausible learning
+- An educational tool demonstrating alternatives to backprop
+- A foundation for neuromorphic hardware deployment
+- A different perspective on learning (energy-based, local rules)
+
+**Success =** MEP becomes the go-to framework for EP research, with clear documentation of when and why to use it.
 
 ---
 
-## Appendix: What We've Learned
+## Appendix: Research Status
 
-### What Works
+### What Works (Confirmed)
 - ✅ EP trains classification models (~89% MNIST)
-- ✅ Gradients flow through all layers
+- ✅ Gradients flow through all layers (verified)
 - ✅ Adaptive settling reduces overhead (~1.5× vs 3× slowdown)
-- ✅ Error feedback works with Dion (not Muon)
+- ✅ Error feedback works correctly with Dion updates
+- ✅ 142 unit tests pass, 85% coverage
+- ✅ Conv2d, LayerNorm, MultiheadAttention support
+- ✅ torch.compile compatible
+- ✅ AMP compatible
 
-### What's Unclear
-- ❓ Does O(1) memory actually enable deeper networks?
-- ❓ Does EP+EF reduce forgetting in continual learning?
-- ❓ Are there tasks where EP outperforms backprop?
+### What Needs Proper Validation (Research Questions)
+- ➖ **O(1) memory** - Theoretically sound. Initial measurement flawed (measured total memory, not activations). Need gradient checkpointing validation at extreme depths (1000+ layers).
+- ➖ **Continual learning** - Preliminary test invalid (reinitialized model per task). Need sequential training with proper forgetting metric.
+- ➖ **Sequential prediction** - Character LM example pending validation.
 
-### What's Next
-The next 2 weeks focus on answering the "What's Unclear" questions with concrete experiments.
+### What's Different About EP (Qualitative Properties)
+- 🔄 No backward pass through computation graph
+- 🔄 Local learning rules (no weight transport problem)
+- 🔄 Energy-based formulation
+- 🔄 Biologically plausible (Hebbian-like updates)
+- 🔄 O(1) activation storage (theoretical)
+- 🔄 Natural fit for neuromorphic hardware
+
+### Research Plan
+1. Proper memory validation (gradient checkpointing, 1000+ layers)
+2. Proper CL benchmark (sequential, forgetting metric)
+3. Character LM validation
+4. Document qualitative differences and research value
+5. Identify niches where EP's properties matter
+

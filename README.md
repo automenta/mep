@@ -157,12 +157,6 @@ optimizer = smep(
 | Very deep networks | **Muon** | Backprop + orthogonalization |
 | Large models (>1M params/layer) | **SDMEP** | `dion_thresh=200000` |
 
-### Key Observations from Benchmarking
-
-- **Classification**: EP achieves competitive accuracy with proper hyperparameters (MNIST: ~89% EP vs ~92% backprop after 5 epochs)
-- **Speed**: EP is ~1.5-2× slower than backprop (adaptive settling reduces overhead)
-- **Memory**: EP uses O(1) memory for activations vs O(depth) for backprop
-
 ---
 
 ## 🏗️ Architecture: Strategy Pattern

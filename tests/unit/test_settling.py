@@ -140,3 +140,32 @@ def test_settle_with_graph_adaptive(device):
     assert call_count < max_steps, f"Settler should have stopped early (steps: {call_count})"
     for s in settled_states:
         assert not s.requires_grad
+
+def test_settle_validation():
+    """Test validation of Settler arguments."""
+    from mep.optimizers.settling import Settler
+    with pytest.raises(ValueError, match="Steps must be positive"):
+        Settler(steps=0)
+    with pytest.raises(ValueError, match="Learning rate must be positive"):
+        Settler(lr=0.0)
+    with pytest.raises(ValueError, match="Tolerance must be non-negative"):
+        Settler(tol=-1)
+    with pytest.raises(ValueError, match="Patience must be non-negative"):
+        Settler(patience=-1)
+
+def test_settle_with_graph_warning():
+    """Test warning when using adaptive with graph."""
+    from mep.optimizers.settling import Settler
+    settler = Settler(adaptive=True, steps=1) # 1 step is enough
+    # Mock model and inputs
+    model = nn.Linear(2, 2)
+    x = torch.randn(2, 2)
+    # Mock structure
+    structure = [{"type": "layer", "module": model}]
+    # Mock energy_fn that returns a value depending on states (so it has grad)
+    # states is the 3rd argument to energy_fn
+    def energy_fn(model, x, states, *args):
+        return sum(s.sum() for s in states)
+
+    with pytest.warns(UserWarning, match="Adaptive settling is not supported"):
+        settler.settle_with_graph(model, x, None, 0.0, energy_fn, structure)

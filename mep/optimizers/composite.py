@@ -99,7 +99,7 @@ class CompositeOptimizer(Optimizer):
 
         # Utilities
         self._inspector = ModelInspector()
-        
+
         # Get loss_type from gradient strategy if available
         # We access attributes that might not exist on the base protocol, so using getattr is safe
         loss_type = getattr(gradient, 'loss_type', 'mse')
@@ -108,11 +108,15 @@ class CompositeOptimizer(Optimizer):
             loss_type=loss_type,
             softmax_temperature=softmax_temperature
         )
-        
+
         # Cache for EP states (when using wrapped model)
         self._free_states: Optional[List[torch.Tensor]] = None
         self._nudged_states: Optional[List[torch.Tensor]] = None
         self._last_input: Optional[torch.Tensor] = None
+        
+        # Error feedback config (passed to update strategies)
+        self._error_beta = getattr(feedback, 'beta', 0.9)
+        self._use_error_feedback = not isinstance(feedback, NoFeedback)
 
     def step( # type: ignore[override]
         self,
@@ -207,16 +211,16 @@ class CompositeOptimizer(Optimizer):
                     if "momentum_buffer" not in state:
                         state["momentum_buffer"] = torch.zeros_like(param)
 
-                    # Error feedback
-                    g_aug = self.feedback.accumulate(param.grad, state, group)
+                    # Error feedback handling:
+                    # - DionUpdate handles error feedback internally (for low-rank SVD residuals)
+                    # - MuonUpdate doesn't need EF (orthogonalization preserves info via rotation)
+                    # - PlainUpdate could use EF but typically doesn't need it
+                    # Pass error feedback config to update strategy via group_config
+                    group["error_beta"] = self._error_beta
+                    group["use_error_feedback"] = self._use_error_feedback
 
-                    # Transform gradient
-                    update = self.update.transform_gradient(param, g_aug, state, group)
-
-                    # Update error buffer
-                    if isinstance(self.feedback, ErrorFeedback):
-                        residual = g_aug - update
-                        self.feedback.update_buffer(residual, state, group)
+                    # Transform gradient (update strategy handles any needed error feedback internally)
+                    update = self.update.transform_gradient(param, param.grad, state, group)
 
                     # Momentum
                     buf = state["momentum_buffer"]

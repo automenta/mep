@@ -236,6 +236,38 @@ print(monitor.summary())
 
 ## 🔮 Understanding EP: A Visual Guide
 
+### What Makes EP Different?
+
+EP is not just "backprop without the backward pass." It has qualitatively different properties:
+
+| Property | Backpropagation | Equilibrium Propagation |
+|----------|----------------|------------------------|
+| **Gradient flow** | Chain rule through computation graph | Contrast between equilibrium states |
+| **Memory** | O(depth) - stores all activations | O(1) - only current states |
+| **Weight transport** | Requires symmetric forward/backward weights | Uses same weights for both directions |
+| **Update locality** | Global error signal | Layer-local energy minimization |
+| **Temporal dynamics** | Instant gradient computation | Iterative settling process |
+| **Biological plausibility** | Low (weight transport problem) | Higher (local Hebbian updates) |
+
+### When EP Might Matter
+
+1. **Memory-constrained training**: EP's O(1) activation storage could enable training deeper networks on limited hardware
+
+2. **Continual learning**: Error feedback with EP may reduce catastrophic forgetting (research direction)
+
+3. **Neuromorphic hardware**: EP's local learning rules map naturally to analog substrates
+
+4. **Energy-based interpretation**: EP provides an energy-based view of learning, which may offer theoretical insights
+
+5. **Language modeling**: Sequential prediction tasks where EP's dynamics differ from BPTT
+
+### When to Use Backprop
+
+- Standard classification/regression tasks
+- Production training pipelines
+- When training speed is critical
+- When maximum accuracy is the goal
+
 ### Free Phase vs Nudged Phase
 
 ```

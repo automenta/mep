@@ -134,6 +134,7 @@ def sdmep(
     rank_frac: float = 0.2,
     dion_thresh: int = 100000,
     error_beta: float = 0.9,
+    use_error_feedback: bool = True,  # Enabled for Dion (recovers lost info)
     loss_type: str = "cross_entropy",
     softmax_temperature: float = 1.0,
     **kwargs: Any
@@ -142,6 +143,8 @@ def sdmep(
     SDMEP: Spectral Dion-Muon Equilibrium Propagation.
 
     Like SMEP but uses low-rank SVD (Dion) for large matrices.
+    Error feedback is enabled by default to recover information lost
+    in low-rank approximation.
 
     Recommended defaults for classification:
     - lr=0.01, beta=0.3, settle_steps=15, settle_lr=0.1
@@ -161,6 +164,7 @@ def sdmep(
         rank_frac: Fraction of singular values to retain.
         dion_thresh: Parameter threshold for Dion vs Muon.
         error_beta: Error feedback decay.
+        use_error_feedback: Enable error feedback for Dion (default: True).
         loss_type: 'mse' or 'cross_entropy'.
 
     Returns:
@@ -172,17 +176,17 @@ def sdmep(
         settle_lr=settle_lr,
         loss_type=loss_type,
     )
-    
+
     update = DionUpdate(
         rank_frac=rank_frac,
         threshold=dion_thresh,
         muon_fallback=MuonUpdate(ns_steps=ns_steps),
     )
-    
+
     constraint = SpectralConstraint(gamma=gamma)
-    
-    feedback = ErrorFeedback(beta=error_beta)
-    
+
+    feedback = ErrorFeedback(beta=error_beta) if use_error_feedback else NoFeedback()
+
     return CompositeOptimizer(
         params,
         gradient=gradient,

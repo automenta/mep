@@ -116,7 +116,7 @@ class Settler:
                 current_energy = float(E.item())
 
                 # Adaptive step size logic
-                if self.adaptive:
+                if self.adaptive and states_backup is not None:
                     if prev_energy is not None:
                         if current_energy > prev_energy:
                             # Energy increased: reject step

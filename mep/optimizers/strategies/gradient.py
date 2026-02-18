@@ -168,20 +168,32 @@ class EPGradient:
     ) -> None:
         """Apply EP gradient: (E_nudged - E_free) / beta."""
         # Prepare target
+        # Use x.dtype (typically float32) to match the precision of the contrastive step
         target_vec = self._prepare_target(
-            target, states_free[-1].shape[-1], states_free[-1].dtype
+            target, states_free[-1].shape[-1], x.dtype
         )
         
-        # Compute energies
-        E_free = energy_fn(model, x, states_free, structure, target_vec=None, beta=0.0)
-        E_nudged = energy_fn(
-            model, x, states_nudged, structure, target_vec=target_vec, beta=self.beta
-        )
-        
-        # Contrast loss
-        loss = (E_nudged - E_free) / self.beta
-        params = list(model.parameters())
-        grads = torch.autograd.grad(loss, params, retain_graph=False, allow_unused=True)
+        # Ensure we run in full precision for the contrastive gradient step
+        device_type = x.device.type
+        # Only disable if valid device for autocast
+        if device_type in ['cuda', 'cpu', 'xpu', 'hpu']:
+            amp_context = torch.amp.autocast(device_type=device_type, enabled=False)
+        else:
+            from contextlib import nullcontext
+            amp_context = nullcontext()
+
+        with torch.enable_grad():
+            with amp_context:
+                # Compute energies
+                E_free = energy_fn(model, x, states_free, structure, target_vec=None, beta=0.0)
+                E_nudged = energy_fn(
+                    model, x, states_nudged, structure, target_vec=target_vec, beta=self.beta
+                )
+
+                # Contrast loss
+                loss = (E_nudged - E_free) / self.beta
+                params = list(model.parameters())
+                grads = torch.autograd.grad(loss, params, retain_graph=False, allow_unused=True)
         
         # Accumulate gradients
         for p, g in zip(params, grads):
@@ -359,20 +371,10 @@ class LocalEPGradient:
             elif item["type"] in ("act", "norm", "pool", "flatten", "dropout"):
                 prev = item["module"](prev)
             elif item["type"] == "attention":
-                # For attention, we assume it's like a layer that produces a state,
-                # but we need to verify if LocalEP handles it as a layer or just passes through.
-                # In EnergyFunction, 'attention' produces a state.
-                # So we should treat it as a layer here if we want LocalEP to update it.
-                # However, LocalEP is typically for feedforward layers.
-                # If we treat it as layer, we append to io_list.
                 if state_idx >= len(states):
                     break
                 module = item["module"]
                 state = states[state_idx]
-
-                # Input to attention (assuming self-attention or simplified interface)
-                # But module(prev) might be complex (Q,K,V).
-                # For now, let's treat it as a layer if it produces state.
                 io_list.append({"module": module, "input": prev, "output": state})
                 prev = state
                 state_idx += 1
@@ -418,11 +420,6 @@ class NaturalGradient:
             structure = structure_fn(model)
         
         # Compute base gradients
-        # Note: We must pass kwargs correctly to satisfy the base strategy
-        # If base strategy is EP, it needs energy_fn/structure_fn
-        # If base strategy is Backprop, it ignores them (or might complain if strict? but **kwargs should handle it)
-
-        # Prepare kwargs
         call_kwargs = kwargs.copy()
         if energy_fn is not None:
             call_kwargs['energy_fn'] = energy_fn

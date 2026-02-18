@@ -98,10 +98,13 @@ class EnergyFunction:
                 else:
                     # MSE for hidden layers and regression
                     self._validate_shapes(h, state, f"Layer {state_idx} ({type(module).__name__})")
-                    E = E + 0.5 * self._safe_mse(h, state) / batch_size
+                    # Ensure state matches prediction dtype (e.g. if state is BF16 from AMP but h is FP32)
+                    E = E + 0.5 * self._safe_mse(h, state.to(h.dtype)) / batch_size
                 
                 # The input to the next layer is the current state (relaxed variable)
-                prev = state
+                # Ensure dtype matches input x to prevent type mismatch with weights
+                # (especially when states were settled in AMP but contrast runs in FP32)
+                prev = state.to(x.dtype)
                 state_idx += 1
             
             elif item_type == "norm":
@@ -134,8 +137,8 @@ class EnergyFunction:
                     h = module(prev)
                 
                 self._validate_shapes(h, state, f"Attention Layer {state_idx}")
-                E = E + 0.5 * self._safe_mse(h, state) / batch_size
-                prev = state
+                E = E + 0.5 * self._safe_mse(h, state.to(h.dtype)) / batch_size
+                prev = state.to(x.dtype)
                 state_idx += 1
             
             elif item_type == "act":

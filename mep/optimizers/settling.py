@@ -46,17 +46,22 @@ def _settle_step_compilable(
 class Settler:
     """
     Settles network activations to minimize energy.
-    
+
     Uses gradient-based optimization to find fixed points of the
     energy function during EP free and nudged phases.
+
+    Key insight: Settling convergence is critical for EP performance.
+    - Higher settle_lr (0.1-0.2) enables faster convergence
+    - More settle_steps (30-50) ensures proper settling
+    - Momentum (0.5) helps escape local minima
     """
-    
+
     MOMENTUM = 0.5
-    
+
     def __init__(
         self,
-        steps: int = 20,
-        lr: float = 0.05,
+        steps: int = 30,  # Increased default from 20 to 30
+        lr: float = 0.15,  # Increased default from 0.05 to 0.15
         loss_type: str = "mse",
         softmax_temperature: float = 1.0,
         tol: float = 1e-4,

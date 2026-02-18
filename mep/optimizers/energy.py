@@ -26,7 +26,7 @@ class EnergyFunction:
     
     def __init__(
         self,
-        loss_type: str = "mse",
+        loss_type: str = "mse",  # MSE for stable EP energy computation
         softmax_temperature: float = 1.0,
     ):
         self.loss_type = loss_type

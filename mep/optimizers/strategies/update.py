@@ -58,10 +58,19 @@ class MuonUpdate:
         state: dict,
         group_config: dict
     ) -> torch.Tensor:
-        if gradient.ndim != 2:
+        orig_shape = None
+        if gradient.ndim > 2:
+            orig_shape = gradient.shape
+            gradient = gradient.view(gradient.shape[0], -1)
+        elif gradient.ndim < 2:
             return gradient
+
+        update = self._newton_schulz(gradient, self.ns_steps)
         
-        return self._newton_schulz(gradient, self.ns_steps)
+        if orig_shape is not None:
+            update = update.view(orig_shape)
+
+        return update
     
     def _newton_schulz(
         self,

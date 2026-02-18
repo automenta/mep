@@ -356,8 +356,26 @@ class LocalEPGradient:
                 io_list.append({"module": module, "input": prev, "output": state})
                 prev = state
                 state_idx += 1
-            elif item["type"] == "act":
+            elif item["type"] in ("act", "norm", "pool", "flatten", "dropout"):
                 prev = item["module"](prev)
+            elif item["type"] == "attention":
+                # For attention, we assume it's like a layer that produces a state,
+                # but we need to verify if LocalEP handles it as a layer or just passes through.
+                # In EnergyFunction, 'attention' produces a state.
+                # So we should treat it as a layer here if we want LocalEP to update it.
+                # However, LocalEP is typically for feedforward layers.
+                # If we treat it as layer, we append to io_list.
+                if state_idx >= len(states):
+                    break
+                module = item["module"]
+                state = states[state_idx]
+
+                # Input to attention (assuming self-attention or simplified interface)
+                # But module(prev) might be complex (Q,K,V).
+                # For now, let's treat it as a layer if it produces state.
+                io_list.append({"module": module, "input": prev, "output": state})
+                prev = state
+                state_idx += 1
         
         return io_list
 

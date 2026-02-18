@@ -98,6 +98,7 @@ class Settler:
         prev_energy: Optional[float] = None
         patience_counter = 0
         current_lr = self.lr
+        just_restored = False
 
         # Backup for adaptive steps
         states_backup = [s.clone() for s in states] if self.adaptive else None
@@ -129,7 +130,7 @@ class Settler:
                             current_lr *= self.step_size_decay
 
                             # We must continue to re-evaluate at restored state
-                            # Note: we skip early stopping check this iter
+                            just_restored = True
                             continue
                         else:
                             # Energy decreased: accept step
@@ -147,7 +148,8 @@ class Settler:
                                 b.copy_(s)
 
                 # Early stopping
-                if prev_energy is not None:
+                # Skip check if we just restored (delta would be 0)
+                if prev_energy is not None and not just_restored:
                     delta = abs(current_energy - prev_energy)
                     if delta < self.tol:
                         patience_counter += 1
@@ -158,6 +160,7 @@ class Settler:
                         # Converged
                         break
 
+                just_restored = False
                 prev_energy = current_energy
 
                 grads = torch.autograd.grad(E, states, retain_graph=False, allow_unused=True)

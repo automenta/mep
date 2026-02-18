@@ -8,7 +8,39 @@ to minimize the energy function during free and nudged phases.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Callable, Tuple
+
+
+def _settle_step_compilable(
+    states: List[torch.Tensor],
+    momentum_buffers: List[torch.Tensor],
+    energy: torch.Tensor,
+    current_lr: float,
+    momentum: float = 0.5,
+) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    """
+    Perform a single settling step - compiled-friendly.
+    
+    This function is designed to be torch.compile-compatible by avoiding
+    Python-side operations and using tensor operations only.
+    """
+    new_states = []
+    new_buffers = []
+    
+    for i, (state, buf, g) in enumerate(zip(states, momentum_buffers, 
+                                             torch.autograd.grad(energy, states, 
+                                                                retain_graph=False, 
+                                                                allow_unused=True))):
+        if g is None:
+            new_states.append(state)
+            new_buffers.append(buf)
+        else:
+            new_buf = buf * momentum + g
+            new_state = state - new_buf * current_lr
+            new_states.append(new_state)
+            new_buffers.append(new_buf)
+    
+    return new_states, new_buffers
 
 
 class Settler:
@@ -351,3 +383,144 @@ class Settler:
             if target.dim() == 1:
                 return F.one_hot(target, num_classes=num_classes).to(dtype=dtype)
             return target.to(dtype=dtype)
+
+    def settle_compiled(
+        self,
+        model: nn.Module,
+        x: torch.Tensor,
+        target: Optional[torch.Tensor],
+        beta: float,
+        energy_fn: Callable,
+        structure: List[Dict[str, Any]],
+    ) -> List[torch.Tensor]:
+        """
+        Settle network activations using torch.compile for acceleration.
+
+        This method uses a fixed number of settling steps (no early stopping)
+        to enable torch.compile optimization. Best for repeated calls with
+        similar models and inputs.
+
+        Args:
+            model: Neural network module.
+            x: Input tensor.
+            target: Target tensor (None for free phase).
+            beta: Nudging strength.
+            energy_fn: Function to compute energy.
+            structure: Model structure from inspector.
+
+        Returns:
+            List of settled state tensors for each layer.
+
+        Note:
+            - Adaptive stepping and early stopping are disabled for compilation.
+            - First call includes compilation overhead; subsequent calls are faster.
+            - Use torch.compile on the energy_fn for maximum benefit.
+        """
+        if x.numel() == 0:
+            raise ValueError(f"Input tensor cannot be empty, got shape {x.shape}")
+        if beta < 0 or beta > 1:
+            raise ValueError(f"Beta must be in [0, 1], got {beta}")
+
+        # Capture initial states
+        states = self._capture_states(model, x, structure)
+
+        if not states:
+            layer_count = sum(1 for item in structure if item["type"] in ("layer", "attention"))
+            if layer_count > 0:
+                raise RuntimeError(
+                    f"No activations captured. Expected {layer_count} layer(s)."
+                )
+            else:
+                return []
+
+        # Prepare target
+        target_vec = None
+        if target is not None:
+            target_vec = self._prepare_target(target, states[-1].shape[-1], states[-1].dtype)
+
+        # Momentum buffers
+        momentum_buffers = [torch.zeros_like(s) for s in states]
+
+        # Fixed settling loop - compiled
+        states = self._settle_loop_fixed(
+            model, x, states, momentum_buffers, target_vec, beta,
+            energy_fn, structure, self.steps, self.lr
+        )
+
+        return [s.detach() for s in states]
+
+    def _settle_loop_fixed(
+        self,
+        model: nn.Module,
+        x: torch.Tensor,
+        states: List[torch.Tensor],
+        momentum_buffers: List[torch.Tensor],
+        target_vec: Optional[torch.Tensor],
+        beta: float,
+        energy_fn: Callable,
+        structure: List[Dict[str, Any]],
+        steps: int,
+        lr: float,
+    ) -> List[torch.Tensor]:
+        """
+        Fixed-step settling loop - designed for torch.compile.
+
+        This method performs a fixed number of settling steps without
+        Python-side control flow, enabling better compilation.
+        """
+        for _ in range(steps):
+            with torch.enable_grad():
+                E = energy_fn(model, x, states, structure, target_vec, beta)
+
+            # SGD step with momentum
+            with torch.no_grad():
+                grads = torch.autograd.grad(E, states, retain_graph=False, allow_unused=True)
+                for i, (state, g) in enumerate(zip(states, grads)):
+                    if g is None:
+                        continue
+                    buf = momentum_buffers[i]
+                    buf.mul_(self.MOMENTUM).add_(g)
+                    state.sub_(buf, alpha=lr)
+
+        return states
+
+
+# Compiled helper function (can be used standalone)
+@torch.compile(mode="reduce-overhead")
+def _compiled_settle_step(
+    states: List[torch.Tensor],
+    momentum_buffers: List[torch.Tensor],
+    model: nn.Module,
+    x: torch.Tensor,
+    target_vec: Optional[torch.Tensor],
+    beta: float,
+    energy_fn: Callable,
+    structure: List[Dict[str, Any]],
+    lr: float,
+    momentum: float = 0.5,
+) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    """
+    Compiled settling step - standalone function for torch.compile.
+
+    This function wraps a single settling step and can be used
+    with torch.compile for acceleration.
+    """
+    with torch.enable_grad():
+        E = energy_fn(model, x, states, structure, target_vec, beta)
+
+    new_states = []
+    new_buffers = []
+
+    with torch.no_grad():
+        grads = torch.autograd.grad(E, states, retain_graph=False, allow_unused=True)
+        for i, (state, buf, g) in enumerate(zip(states, momentum_buffers, grads)):
+            if g is None:
+                new_states.append(state)
+                new_buffers.append(buf)
+            else:
+                new_buf = buf * momentum + g
+                new_state = state - new_buf * lr
+                new_states.append(new_state)
+                new_buffers.append(new_buf)
+
+    return new_states, new_buffers

@@ -31,6 +31,15 @@ class Settler:
         patience: int = 5,
         adaptive: bool = False,
     ):
+        if steps <= 0:
+            raise ValueError(f"Steps must be positive, got {steps}")
+        if lr <= 0:
+            raise ValueError(f"Learning rate must be positive, got {lr}")
+        if tol < 0:
+            raise ValueError(f"Tolerance must be non-negative, got {tol}")
+        if patience < 0:
+            raise ValueError(f"Patience must be non-negative, got {patience}")
+
         self.steps = steps
         self.lr = lr
         self.loss_type = loss_type
@@ -222,10 +231,8 @@ class Settler:
         # Backup not easily supported for graph mode due to graph connections
         # For now, disable adaptive step size in graph mode or implement complex rollback
         if self.adaptive:
-            # Warn or fallback?
-            # Supporting rollback with graph is hard because we need to restore graph connectivity.
-            # We will ignore adaptive flag here for now to avoid complexity/bugs.
-            pass
+            import warnings
+            warnings.warn("Adaptive settling is not supported in 'settle_with_graph'. Ignoring adaptive flag.")
 
         for step in range(self.steps):
             working_states = [s.detach().requires_grad_(True) for s in states]

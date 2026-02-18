@@ -357,7 +357,85 @@ class LocalEPGradient:
 
             # Clear inter-layer params after they have been assigned to a layer update
             inter_layer_params = []
-    
+
+        # Handle any remaining parameters (e.g., BN after last layer)
+        if inter_layer_params:
+            self._update_trailing_params(
+                inter_layer_params, states_nudged[-1], target, structure, x.dtype
+            )
+
+    def _update_trailing_params(
+        self,
+        params: List[nn.Parameter],
+        last_state: torch.Tensor,
+        target: torch.Tensor,
+        structure: List[Dict[str, Any]],
+        dtype: torch.dtype
+    ) -> None:
+        """Update parameters of modules after the last layer."""
+        # Identify modules after the last layer
+        trailing_modules = []
+
+        # Find the point after the last "layer" or "attention"
+        start_idx = 0
+        for i in range(len(structure) - 1, -1, -1):
+            if structure[i]["type"] in ("layer", "attention"):
+                start_idx = i + 1
+                break
+
+        for i in range(start_idx, len(structure)):
+            trailing_modules.append(structure[i]["module"])
+
+        if not trailing_modules:
+            return
+
+        # Compute loss on nudged state through trailing modules
+        with torch.enable_grad():
+            output = last_state.detach().requires_grad_(True)
+
+            for mod in trailing_modules:
+                output = mod(output)
+
+            # Prepare target based on final output shape
+            target_vec = self._prepare_target(
+                target, output.shape[-1], dtype
+            )
+
+            if self.loss_type == "cross_entropy":
+                loss = F.cross_entropy(output, target_vec, reduction="sum", label_smoothing=0.1) / output.shape[0]
+            else:
+                 # MSE - handle potential shape mismatch
+                 if output.shape != target_vec.shape:
+                      if output.numel() == target_vec.numel():
+                           target_vec = target_vec.view_as(output)
+
+                 loss = F.mse_loss(output, target_vec, reduction="sum") / output.shape[0]
+
+            grads = torch.autograd.grad(loss, params, retain_graph=False, allow_unused=True)
+
+        for p, g in zip(params, grads):
+            if g is not None:
+                if p.grad is None:
+                    p.grad = g.detach()
+                else:
+                    p.grad.add_(g.detach())
+
+    def _prepare_target(
+        self,
+        target: torch.Tensor,
+        num_classes: int,
+        dtype: torch.dtype
+    ) -> torch.Tensor:
+        """Convert target to appropriate format."""
+        if self.loss_type == "cross_entropy":
+            if target.dim() > 1 and target.shape[1] > 1:
+                return target.argmax(dim=1).long()
+            return target.squeeze().long()
+        else:
+            if target.dim() == 1:
+                return F.one_hot(target, num_classes=num_classes).to(dtype=dtype)
+            return target.to(dtype=dtype)
+
     def _get_layer_io(
         self,
         x: torch.Tensor,
@@ -457,13 +535,29 @@ class NaturalGradient:
         Stores Fisher blocks in a way accessible to NaturalUpdate strategy.
         """
         # For empirical Fisher: F = sum(g @ g.T) over samples
-        # We approximate using the free-phase gradients
-        if energy_fn is not None and structure is not None:
-            # EP context - use free phase energy gradients
-            pass  # Fisher will be computed from stored grad_free
-        else:
-            # Standard backprop context
-            for p in model.parameters():
-                if p.grad is not None and p.ndim >= 2:
-                    # Store for NaturalUpdate to use
-                    pass  # Gradient already in p.grad
+        # We approximate using the batch-averaged gradient (rank-1 approximation per step)
+        # This is a simplification but allows running without per-sample gradients.
+
+        for p in model.parameters():
+            if p.grad is not None:
+                g = p.grad.detach()
+
+                # Reshape to 2D (Out, In)
+                if g.ndim > 2:
+                    g = g.view(g.shape[0], -1)
+                elif g.ndim < 2:
+                    # Vectors (biases) - skip or treat as diagonal?
+                    # NaturalGradient usually targets weights.
+                    continue
+
+                # Compute Fisher proxy
+                # We assume whitening along the input dimension (In, In) covariance
+                # F = g.T @ g  (In, In)
+
+                if self.use_diagonal:
+                    fisher = torch.sum(g**2, dim=0) # (In,)
+                else:
+                    fisher = g.T @ g # (In, In)
+
+                # Store on parameter for FisherUpdate to consume
+                setattr(p, "fisher", fisher)

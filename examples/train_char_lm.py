@@ -8,11 +8,15 @@ Unlike classification, LM training shows different dynamics:
 - Energy-based formulation may offer different convergence properties
 - Local learning rules could affect how context is learned
 
+Note: EP works with continuous states, so we use an MLP architecture
+that operates on embedded representations directly.
+
 Run: python examples/train_char_lm.py
 """
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import time
 from typing import Tuple
 
@@ -20,18 +24,51 @@ from mep import smep, muon_backprop
 
 
 class CharLM(nn.Module):
-    """Simple character-level language model."""
-    
-    def __init__(self, vocab_size: int, embed_dim: int = 64, hidden_dim: int = 128):
+    """Simple character-level language model with MLP architecture for EP."""
+
+    def __init__(self, vocab_size: int, embed_dim: int = 64, hidden_dim: int = 256, seq_len: int = 32, use_embedding: bool = True):
         super().__init__()
-        self.embed = nn.Embedding(vocab_size, embed_dim)
-        self.rnn = nn.LSTM(embed_dim, hidden_dim, batch_first=True)
-        self.head = nn.Linear(hidden_dim, vocab_size)
-    
+        self.use_embedding = use_embedding
+        
+        if use_embedding:
+            self.embed = nn.Embedding(vocab_size, embed_dim)
+        else:
+            self.embed = None
+            
+        self.seq_len = seq_len
+        self.embed_dim = embed_dim
+        
+        # MLP architecture compatible with EP
+        # Input: flattened embedding sequence (seq_len * embed_dim)
+        self.network = nn.Sequential(
+            nn.Linear(seq_len * embed_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, vocab_size * seq_len),
+        )
+        self.vocab_size = vocab_size
+        self.seq_len = seq_len
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        embed = self.embed(x)
-        hidden, _ = self.rnn(embed)
-        return self.head(hidden)
+        # x shape: (batch, seq_len) for Long input
+        # or (batch, seq_len * embed_dim) for Float input
+        
+        if self.use_embedding and x.dtype == torch.long:
+            # Embed and flatten
+            embed = self.embed(x)  # (batch, seq_len, embed_dim)
+            x = embed.view(x.size(0), -1)  # (batch, seq_len * embed_dim)
+        elif x.dim() == 3:
+            # (batch, seq_len, embed_dim) - flatten it
+            x = x.view(x.size(0), -1)
+        # else: already flattened (batch, seq_len * embed_dim)
+        
+        # Network forward pass
+        output = self.network(x)  # (batch, vocab_size * seq_len)
+        
+        # Reshape to (batch * seq_len, vocab_size) for cross-entropy
+        output = output.view(-1, self.vocab_size)
+        return output
 
 
 def load_shakespeare() -> Tuple[str, dict, dict]:
@@ -85,28 +122,55 @@ def create_batches(text: str, char_to_idx: dict, seq_len: int, batch_size: int):
     return torch.stack(sequences), torch.stack(targets)
 
 
-def train_epoch_ep(model, optimizer, sequences, targets, device):
+def train_epoch_ep(model, optimizer, sequences, targets, device, embed_layer):
     """Train one epoch with EP."""
     model.train()
     total_loss = 0
-    
+
     for seq, tgt in zip(sequences, targets):
         seq, tgt = seq.to(device), tgt.to(device)
         
-        # EP step - predict next character
-        optimizer.step(x=seq, target=tgt)
-        optimizer.zero_grad()
-    
+        # Add batch dimension: (seq_len,) -> (1, seq_len)
+        if seq.dim() == 1:
+            seq = seq.unsqueeze(0)
+        if tgt.dim() == 1:
+            tgt = tgt.unsqueeze(0)
+        
+        # Pre-embed the input for EP (EP needs float states)
+        with torch.no_grad():
+            seq_embedded = embed_layer(seq)  # (1, seq_len, embed_dim)
+            seq_embedded = seq_embedded.view(seq.size(0), -1)  # (1, seq_len * embed_dim)
+
+        # EP step - predict next character using embedded input
+        optimizer.step(x=seq_embedded, target=tgt)
+
     # Compute loss for reporting
     model.eval()
     with torch.no_grad():
         total_loss = 0
         for seq, tgt in zip(sequences, targets):
             seq, tgt = seq.to(device), tgt.to(device)
-            logits = model(seq)
-            loss = nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), tgt.view(-1))
+            
+            # Add batch dimension
+            if seq.dim() == 1:
+                seq = seq.unsqueeze(0)
+            if tgt.dim() == 1:
+                tgt = tgt.unsqueeze(0)
+            
+            # For EP model (no embedding), embed first
+            seq_embedded = embed_layer(seq)
+            seq_embedded = seq_embedded.view(seq.size(0), -1)
+            
+            # Use network directly (model without embedding)
+            output = model.network(seq_embedded)  # (1, vocab_size * seq_len)
+            # Reshape to (batch * seq_len, vocab_size)
+            logits = output.view(-1, model.vocab_size)
+            
+            # Reshape target: (1, seq_len) -> (seq_len,)
+            tgt_flat = tgt.view(-1)
+            loss = nn.functional.cross_entropy(logits, tgt_flat)
             total_loss += loss.item()
-    
+
     return total_loss / len(sequences)
 
 
@@ -114,33 +178,77 @@ def train_epoch_bp(model, optimizer, sequences, targets, device):
     """Train one epoch with backprop."""
     model.train()
     total_loss = 0
-    
+
     for seq, tgt in zip(sequences, targets):
         seq, tgt = seq.to(device), tgt.to(device)
         
+        # Add batch dimension: (seq_len,) -> (1, seq_len)
+        if seq.dim() == 1:
+            seq = seq.unsqueeze(0)
+        if tgt.dim() == 1:
+            tgt = tgt.unsqueeze(0)
+
         optimizer.zero_grad()
         logits = model(seq)
-        loss = nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), tgt.view(-1))
+        # Reshape target to match logits: (batch * seq_len,)
+        tgt_flat = tgt.view(-1)
+        loss = nn.functional.cross_entropy(logits, tgt_flat)
         loss.backward()
         optimizer.step()
-    
+
     return total_loss / len(sequences)
 
 
 def generate_text(model, char_to_idx, idx_to_char, seed_text: str, max_len: int = 100, device='cpu'):
-    """Generate text from model."""
+    """Generate text from model (with embedding layer)."""
     model.eval()
-    
+
     # Encode seed
     chars = list(seed_text)
-    
+
     with torch.no_grad():
         for _ in range(max_len):
-            seq = torch.tensor([[char_to_idx.get(ch, 0) for ch in chars[-20:]]], device=device)
+            # Use last SEQ_LEN characters (pad if needed)
+            context = chars[-model.seq_len:] if len(chars) >= model.seq_len else chars
+            # Pad to seq_len
+            while len(context) < model.seq_len:
+                context = [' '] + context
+            
+            seq = torch.tensor([[char_to_idx.get(ch, 0) for ch in context]], device=device)
             logits = model(seq)
+            # Get prediction for last position
             next_char_idx = logits[0, -1].argmax().item()
             chars.append(idx_to_char.get(next_char_idx, ' '))
-    
+
+    return ''.join(chars)
+
+
+def generate_text_ep(model, embed_layer, char_to_idx, idx_to_char, seed_text: str, max_len: int = 100, device='cpu'):
+    """Generate text from EP model (separate embedding layer)."""
+    model.eval()
+    embed_layer.eval()
+
+    # Encode seed
+    chars = list(seed_text)
+
+    with torch.no_grad():
+        for _ in range(max_len):
+            # Use last SEQ_LEN characters
+            context = chars[-model.seq_len:] if len(chars) >= model.seq_len else chars
+            # Pad to seq_len
+            while len(context) < model.seq_len:
+                context = [' '] + context
+            
+            # Embed
+            seq_indices = torch.tensor([[char_to_idx.get(ch, 0) for ch in context]], device=device)
+            seq_embedded = embed_layer(seq_indices)
+            seq_embedded = seq_embedded.view(seq_embedded.size(0), -1)
+            
+            # Forward through network
+            output = model.network(seq_embedded)
+            next_char_idx = output[0, -1].argmax().item()
+            chars.append(idx_to_char.get(next_char_idx, ' '))
+
     return ''.join(chars)
 
 
@@ -169,42 +277,47 @@ def main():
     print("\n" + "-" * 60)
     print("Training with Backpropagation")
     print("-" * 60)
-    
-    model_bp = CharLM(vocab_size).to(DEVICE)
+
+    model_bp = CharLM(vocab_size, seq_len=SEQ_LEN, use_embedding=True).to(DEVICE)
     opt_bp = muon_backprop(model_bp.parameters(), lr=0.01)
-    
+
     start = time.time()
     for epoch in range(EPOCHS):
         loss = train_epoch_bp(model_bp, opt_bp, sequences, targets, DEVICE)
         elapsed = time.time() - start
         print(f"Epoch {epoch+1}/{EPOCHS}: Loss={loss:.3f}, Time={elapsed:.1f}s")
-    
+
     print("\nGenerated text (backprop):")
     print(generate_text(model_bp, char_to_idx, idx_to_char, "ROMEO: ", device=DEVICE))
-    
+
     # Train with EP
     print("\n" + "-" * 60)
     print("Training with Equilibrium Propagation")
     print("-" * 60)
+
+    # For EP, we use a model without embedding layer (EP works with float inputs)
+    model_ep = CharLM(vocab_size, seq_len=SEQ_LEN, use_embedding=False).to(DEVICE)
+    # Create a separate embedding layer for preprocessing
+    embed_layer = nn.Embedding(vocab_size, 64).to(DEVICE)
     
-    model_ep = CharLM(vocab_size).to(DEVICE)
     opt_ep = smep(
-        model_ep.parameters(),
+        list(model_ep.parameters()) + list(embed_layer.parameters()),
         model=model_ep,
         lr=0.005,  # Lower LR for EP
         mode='ep',
         settle_steps=10,
         loss_type='cross_entropy',
     )
-    
+
     start = time.time()
     for epoch in range(EPOCHS):
-        loss = train_epoch_ep(model_ep, opt_ep, sequences, targets, DEVICE)
+        loss = train_epoch_ep(model_ep, opt_ep, sequences, targets, DEVICE, embed_layer)
         elapsed = time.time() - start
         print(f"Epoch {epoch+1}/{EPOCHS}: Loss={loss:.3f}, Time={elapsed:.1f}s")
-    
+
     print("\nGenerated text (EP):")
-    print(generate_text(model_ep, char_to_idx, idx_to_char, "ROMEO: ", device=DEVICE))
+    # For generation with EP model, we need to use embed_layer + model_ep.network
+    print(generate_text_ep(model_ep, embed_layer, char_to_idx, idx_to_char, "ROMEO: ", device=DEVICE))
     
     print("\n" + "=" * 60)
     print("Notes:")

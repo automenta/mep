@@ -299,6 +299,61 @@ For classification with CrossEntropy:
 
 ---
 
+## 💡 When to Use EP: Honest Positioning
+
+### EP's Unique Value
+
+**EP is NOT designed to replace backpropagation for standard deep learning.** Backprop excels at production training, maximum accuracy, and speed-critical applications.
+
+**EP's value lies in specific research niches:**
+
+| Use Case | Why EP Matters | Status |
+|----------|---------------|--------|
+| **Biological plausibility research** | No weight transport problem; local Hebbian updates match neural circuits | ✅ Working |
+| **Neuromorphic hardware** | Event-based dynamics map naturally to analog substrates | 🔬 Research needed |
+| **Energy-based model research** | Direct energy minimization framework | ✅ Working |
+| **Educational tool** | Demonstrates alternatives to backpropagation | ✅ Working |
+| **Continual learning** | Error feedback may reduce forgetting | 🔬 Needs validation |
+| **Memory-constrained training** | O(1) activation storage theoretical | 🔬 Needs validation |
+
+### When to Use Backprop Instead
+
+- **Standard classification/regression**: Backprop is faster and more accurate
+- **Production pipelines**: Backprop has mature tooling
+- **Training speed critical**: EP is ~1.5-3× slower due to settling
+- **Maximum accuracy goals**: Backprop remains state-of-the-art
+
+### EP's Qualitative Differences
+
+EP exhibits fundamentally different learning dynamics:
+
+1. **No backward pass through computation graph** - Gradients emerge from energy minimization
+2. **Local learning rules** - Each layer updates based on local state contrasts
+3. **Iterative settling** - Network reaches equilibrium before updating
+4. **Contrastive learning** - Compares free vs nudged states
+5. **Energy-based interpretation** - Learning minimizes energy function
+
+### Current Validation Status
+
+| Claim | Theoretical Basis | Empirical Status |
+|-------|------------------|------------------|
+| O(1) activation memory | ✓ Sound | ➔ Needs proper validation |
+| Reduced catastrophic forgetting | ✓ Plausible | ➔ Needs proper benchmark |
+| Biologically plausible | ✓ Yes | ✓ Local rules confirmed |
+| Works on sequential tasks | ✓ Yes | ➔ Character LM example added |
+| Competitive accuracy | ✓ Possible | ✓ Classification works (~89% MNIST) |
+
+### Research Contributions
+
+Even if EP doesn't "beat" backprop on standard benchmarks, it provides:
+
+- **Research tool** for studying biologically plausible learning mechanisms
+- **Educational value** demonstrating alternative learning paradigms
+- **Neuromorphic foundation** for future analog hardware deployment
+- **Theoretical insights** from energy-based learning perspective
+
+---
+
 ## 📚 References
 
 1.  Scellier, B., & Bengio, Y. (2017). Equilibrium Propagation: Bridging the Gap Between Energy-Based Models and Backpropagation. *Frontiers in Computational Neuroscience*, 11, 24.
@@ -346,19 +401,39 @@ mep/
 
 ## 🤝 Contributing
 
-Contributions welcome! High-priority areas:
+Contributions welcome! High-priority areas based on [ROADMAP.md](ROADMAP.md):
 
-1.  **Fix regression instability** - EP should excel here
-2.  **Adaptive settling** - Early stopping for speedup
-3.  **SDMEP tuning** - Better rank selection for large models
-4.  **Continual learning benchmarks** - More task sequences, domains
-5.  **Hardware demos** - Neuromorphic chip implementations
+### Immediate Priorities (Week 1-2)
+
+1.  **Memory validation study** - Run `examples/validate_memory_scaling.py` at extreme depths (1000+ layers)
+2.  **Continual learning benchmark** - Proper sequential training with forgetting metrics
+3.  **Character LM tuning** - Improve text generation quality with EP
+4.  **Documentation** - Document EP's qualitative learning dynamics
+
+### Medium-Term (Month 1-2)
+
+5.  **Add baselines** - EWC, GEM for continual learning comparison
+6.  **Deep scaling study** - Test at 1000+ layers with gradient checkpointing
+7.  **Publish results** - Honest assessment of EP's tradeoffs
+
+### Long-Term (Month 3+)
+
+8.  **Find EP's niches** - Identify domains where EP excels
+9.  **Neuromorphic demos** - Partner with hardware groups
+10. **PyTorch Lightning integration** - If/when adoption warrants it
 
 ```bash
 # Development setup
 pip install -e ".[dev]"
 pytest tests/ -v
 ```
+
+### How to Contribute
+
+- **Validation studies**: Run benchmarks and report results (positive or negative)
+- **Bug reports**: Include minimal reproduction examples
+- **Feature requests**: Explain use case and why it matters for EP research
+- **Documentation**: Improve examples, fix typos, add tutorials
 
 ---
 

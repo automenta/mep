@@ -313,23 +313,30 @@ class LocalEPGradient:
         map_nudged = {id(item["module"]): item for item in io_nudged}
         batch_size = x.shape[0]
         
+        inter_layer_params: List[nn.Parameter] = []
+
         for item in structure:
+            module = item["module"]
+
             if item["type"] != "layer":
+                # Collect parameters of non-layer modules (e.g., BN, Norm)
+                # to be updated with the next layer
+                inter_layer_params.extend(module.parameters())
                 continue
             
-            module = item["module"]
             if id(module) not in map_free or id(module) not in map_nudged:
                 continue
             
             # Free phase
-            in_free = map_free[id(module)]["input"].detach()
+            in_free = map_free[id(module)]["input"]
             out_free = map_free[id(module)]["output"].detach()
             
             # Nudged phase
-            in_nudged = map_nudged[id(module)]["input"].detach()
+            in_nudged = map_nudged[id(module)]["input"]
             out_nudged = map_nudged[id(module)]["output"].detach()
             
-            module_params = list(module.parameters())
+            # Update layer params AND accumulated inter-layer params
+            module_params = list(module.parameters()) + inter_layer_params
             
             with torch.enable_grad():
                 pred_free = module(in_free)
@@ -347,6 +354,9 @@ class LocalEPGradient:
                         p.grad = g.detach()
                     else:
                         p.grad.add_(g.detach())
+
+            # Clear inter-layer params after they have been assigned to a layer update
+            inter_layer_params = []
     
     def _get_layer_io(
         self,

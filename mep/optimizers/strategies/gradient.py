@@ -196,14 +196,11 @@ class EPGradient:
                 loss = (E_nudged - E_free) / self.beta
                 params = list(model.parameters())
                 grads = torch.autograd.grad(loss, params, retain_graph=False, allow_unused=True)
-        
-        # Accumulate gradients
+
+        # Set gradients (overwrite any existing gradients)
         for p, g in zip(params, grads):
             if g is not None:
-                if p.grad is None:
-                    p.grad = g.detach()
-                else:
-                    p.grad.add_(g.detach())
+                p.grad = g.detach()
     
     def _prepare_target(
         self,
@@ -349,13 +346,10 @@ class LocalEPGradient:
                 
                 loss = (E_nudged - E_free) / self.beta
                 grads = torch.autograd.grad(loss, module_params, retain_graph=False, allow_unused=True)
-            
+
             for p, g in zip(module_params, grads):
                 if g is not None:
-                    if p.grad is None:
-                        p.grad = g.detach()
-                    else:
-                        p.grad.add_(g.detach())
+                    p.grad = g.detach()
 
             # Clear inter-layer params after they have been assigned to a layer update
             inter_layer_params = []
@@ -417,10 +411,7 @@ class LocalEPGradient:
 
         for p, g in zip(params, grads):
             if g is not None:
-                if p.grad is None:
-                    p.grad = g.detach()
-                else:
-                    p.grad.add_(g.detach())
+                p.grad = g.detach()
 
     def _prepare_target(
         self,

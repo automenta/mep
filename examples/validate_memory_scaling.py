@@ -71,27 +71,25 @@ class DeepMLP(nn.Module):
         self.num_layers = num_layers
         
         # Create layers as ModuleList for checkpointing compatibility
-        self.layers = nn.ModuleList()
+        layers = []
         
-        # Input projection
-        self.input_proj = nn.Linear(input_dim, hidden_dim)
+        # Input layer
+        layers.append(nn.Linear(input_dim, hidden_dim))
+        layers.append(nn.ReLU())
         
         # Hidden layers
-        for i in range(num_layers):
-            self.layers.append(nn.Linear(hidden_dim, hidden_dim))
+        for _ in range(num_layers - 2):
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+            layers.append(nn.ReLU())
         
         # Output layer
-        self.output_proj = nn.Linear(hidden_dim, output_dim)
+        layers.append(nn.Linear(hidden_dim, output_dim))
         
+        self.network = nn.Sequential(*layers)
         self.hidden_dim = hidden_dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = F.relu(self.input_proj(x))
-        
-        for layer in self.layers:
-            x = F.relu(layer(x))
-        
-        return self.output_proj(x)
+        return self.network(x)
 
 
 class CheckpointedDeepMLP(nn.Module):
@@ -100,22 +98,37 @@ class CheckpointedDeepMLP(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int, num_layers: int, output_dim: int):
         super().__init__()
         self.num_layers = num_layers
-        self.input_proj = nn.Linear(input_dim, hidden_dim)
-        self.layers = nn.ModuleList([
-            nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers)
-        ])
-        self.output_proj = nn.Linear(hidden_dim, output_dim)
+        
+        layers = []
+        # Input layer
+        layers.append(nn.Linear(input_dim, hidden_dim))
+        layers.append(nn.ReLU())
+        
+        # Hidden layers with checkpointing
+        for _ in range(num_layers - 2):
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+            layers.append(nn.ReLU())
+        
+        # Output layer
+        layers.append(nn.Linear(hidden_dim, output_dim))
+        
+        self.network = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = F.relu(self.input_proj(x))
+        # Apply gradient checkpointing to each layer pair (Linear + ReLU)
+        # This isolates activation memory from O(depth) storage
+        x = self.network[0](x)  # First linear
+        x = F.relu(x)
         
-        # Gradient checkpointing: only store input/output of each checkpoint
-        # This isolates activation memory from the O(depth) storage
-        for layer in self.layers:
-            x = torch.utils.checkpoint.checkpoint(layer, x, use_reentrant=False)
+        for i in range(1, len(self.network) - 1, 2):
+            linear = self.network[i]
+            # Checkpoint the linear transformation
+            x = torch.utils.checkpoint.checkpoint(linear, x, use_reentrant=False)
             x = F.relu(x)
         
-        return self.output_proj(x)
+        # Output layer
+        x = self.network[-1](x)
+        return x
 
 
 def measure_weight_memory(model: nn.Module) -> float:
@@ -261,7 +274,7 @@ def run_scaling_experiment(
                   f"{result_bp.total_memory_mb:.2f} MB (total)")
             del model_bp
         except RuntimeError as e:
-                    results.append(MemoryMeasurement(
+            results.append(MemoryMeasurement(
                 depth=depth, method='backprop', checkpointing=use_checkpointing,
                 activation_memory_mb=0, total_memory_mb=0, weight_memory_mb=0,
                 success=False, error=str(e)

@@ -82,13 +82,19 @@ class ModelInspector:
         )):
             return "norm"
 
-        # Activations & Flatten/Dropout
+        # Activations
         elif isinstance(m, (
             nn.ReLU, nn.Sigmoid, nn.Tanh, nn.LeakyReLU, nn.Softmax,
-            nn.Flatten, nn.Dropout, nn.GELU, nn.SiLU, nn.ELU,
+            nn.GELU, nn.SiLU, nn.ELU,
             nn.CELU, nn.GLU, nn.Hardswish, nn.Mish
         )):
             return "act"
+
+        elif isinstance(m, nn.Flatten):
+            return "flatten"
+
+        elif isinstance(m, nn.Dropout):
+            return "dropout"
 
         # Pooling layers
         elif isinstance(m, (

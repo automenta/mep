@@ -113,6 +113,12 @@ class EnergyFunction:
             elif item_type == "pool":
                 prev = module(prev)
             
+            elif item_type == "flatten":
+                prev = module(prev)
+
+            elif item_type == "dropout":
+                prev = module(prev)
+
             elif item_type == "attention":
                 if state_idx >= len(states):
                     break
@@ -142,12 +148,6 @@ class EnergyFunction:
                 state_idx += 1
             
             elif item_type == "act":
-                prev = module(prev)
-
-            elif item_type == "dropout":
-                 prev = module(prev)
-
-            elif item_type == "flatten":
                 prev = module(prev)
 
         # Nudge term
@@ -191,8 +191,9 @@ class EnergyFunction:
         eps = 1e-8
         self._validate_shapes(prediction, state, "KL Divergence")
 
-        state_softmax = F.softmax(state / self.softmax_temperature, dim=-1)
-        h_softmax = F.softmax(prediction / self.softmax_temperature, dim=-1)
+        # Assume class dimension is 1 (standard for PyTorch: N, C, ...)
+        state_softmax = F.softmax(state / self.softmax_temperature, dim=1)
+        h_softmax = F.softmax(prediction / self.softmax_temperature, dim=1)
         
         kl_div = F.kl_div(
             torch.log(state_softmax + eps), h_softmax, reduction="sum"

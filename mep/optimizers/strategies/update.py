@@ -10,7 +10,7 @@ Implements various methods for transforming gradients into updates:
 
 import torch
 import torch.nn as nn
-from typing import Optional, Any
+from typing import Optional, Any, cast
 from .base import UpdateStrategy
 
 # Import CUDA kernels if available
@@ -80,7 +80,7 @@ class MuonUpdate:
     ) -> torch.Tensor:
         """Newton-Schulz orthogonalization."""
         if CUDA_AVAILABLE and G.is_cuda:
-            return newton_schulz_cuda(G, steps=steps, epsilon=epsilon)
+            return cast(torch.Tensor, newton_schulz_cuda(G, steps=steps, epsilon=epsilon))
         
         r, c = G.shape
         transposed = False
@@ -104,7 +104,7 @@ class MuonUpdate:
         if transposed:
             X = X.T
         
-        return X
+        return cast(torch.Tensor, X)
 
 
 class DionUpdate:
@@ -262,7 +262,7 @@ class FisherUpdate:
     ) -> torch.Tensor:
         """Newton-Schulz orthogonalization."""
         if CUDA_AVAILABLE and G.is_cuda:
-            return newton_schulz_cuda(G, steps=steps, epsilon=epsilon)
+            return cast(torch.Tensor, newton_schulz_cuda(G, steps=steps, epsilon=epsilon))
         
         r, c = G.shape
         transposed = False
@@ -284,4 +284,4 @@ class FisherUpdate:
         if transposed:
             X = X.T
         
-        return X
+        return cast(torch.Tensor, X)

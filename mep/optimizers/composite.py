@@ -114,7 +114,7 @@ class CompositeOptimizer(Optimizer):
         self._nudged_states: Optional[List[torch.Tensor]] = None
         self._last_input: Optional[torch.Tensor] = None
 
-    def step(
+    def step( # type: ignore[override]
         self,
         closure: Optional[Callable[[], float]] = None,
         x: Optional[torch.Tensor] = None,

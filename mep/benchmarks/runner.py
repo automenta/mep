@@ -116,7 +116,7 @@ def _merge_configs(base: Dict, override: Dict) -> Dict:
 
 def create_model(architecture: List[Dict[str, Any]], device: torch.device) -> nn.Module:
     """Create model from architecture specification."""
-    layers = []
+    layers: List[nn.Module] = []
     
     for layer_spec in architecture:
         # Make a copy to avoid modifying original config
@@ -200,7 +200,7 @@ def get_dataloader(
     # Subset for faster benchmarking
     if subset_size and subset_size < len(train_dataset):
         indices = torch.randperm(len(train_dataset))[:subset_size]
-        train_dataset = torch.utils.data.Subset(train_dataset, indices)
+        train_dataset = torch.utils.data.Subset(train_dataset, indices.tolist())
     
     train_loader = DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True,

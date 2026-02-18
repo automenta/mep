@@ -134,8 +134,10 @@ class Settler:
                             continue
                         else:
                             # Energy decreased: accept step
-                            # Grow LR slightly (with cap?)
-                            current_lr = min(current_lr * self.step_size_growth, self.lr * 10)
+
+                            # Grow LR slightly (with cap?) only if we didn't just restore
+                            if not just_restored:
+                                current_lr = min(current_lr * self.step_size_growth, self.lr * 10)
 
                             # Update backup
                             with torch.no_grad():

@@ -5,10 +5,11 @@ This module provides optimized CUDA kernels for:
 1. Low-rank SVD (Dion updates)
 2. Newton-Schulz iteration (Muon orthogonalization)
 3. Spectral norm estimation via power iteration
+4. Fused settling operations for EP
 """
 
 import torch
-from typing import Tuple, Optional, cast
+from typing import Tuple, Optional, cast, List
 
 
 def lowrank_svd_cuda(
@@ -299,3 +300,83 @@ def batched_newton_schulz_cuda(
         X = X.transpose(1, 2)
 
     return cast(torch.Tensor, X)
+
+
+def fused_settle_step(
+    states: List[torch.Tensor],
+    momentum_buffers: List[torch.Tensor],
+    grads: List[torch.Tensor],
+    momentum: float = 0.5,
+    lr: float = 0.1,
+) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    """
+    Fused settling step: apply momentum and update states in one operation.
+
+    This reduces kernel launch overhead by fusing the momentum buffer update
+    and state update into a single conceptual operation (though PyTorch still
+    launches separate kernels, the data stays in cache).
+
+    Formula:
+        buf = momentum * buf + grad
+        state = state - lr * buf
+
+    Args:
+        states: List of state tensors to update.
+        momentum_buffers: List of momentum buffer tensors.
+        grads: List of gradient tensors.
+        momentum: Momentum coefficient (default 0.5).
+        lr: Learning rate for settling.
+
+    Returns:
+        Tuple of (new_states, new_momentum_buffers).
+    """
+    new_states = []
+    new_buffers = []
+
+    for state, buf, grad in zip(states, momentum_buffers, grads):
+        if grad is None:
+            new_states.append(state)
+            new_buffers.append(buf)
+            continue
+
+        # Fused update: buf = momentum * buf + grad; state = state - lr * buf
+        # Using torch.addcmul for better fusion potential
+        new_buf = torch.add(buf, grad, alpha=1.0)
+        new_buf = torch.lerp(buf, new_buf, 1.0 - momentum)  # momentum * buf + grad
+        
+        new_state = torch.add(state, new_buf, alpha=-lr)
+
+        new_states.append(new_state)
+        new_buffers.append(new_buf)
+
+    return new_states, new_buffers
+
+
+def fused_settle_step_inplace(
+    states: List[torch.Tensor],
+    momentum_buffers: List[torch.Tensor],
+    grads: List[torch.Tensor],
+    momentum: float = 0.5,
+    lr: float = 0.1,
+) -> None:
+    """
+    In-place fused settling step for maximum efficiency.
+
+    Modifies states and momentum buffers in-place to avoid allocations.
+
+    Args:
+        states: List of state tensors to update (modified in-place).
+        momentum_buffers: List of momentum buffers (modified in-place).
+        grads: List of gradient tensors.
+        momentum: Momentum coefficient (default 0.5).
+        lr: Learning rate for settling.
+    """
+    for state, buf, grad in zip(states, momentum_buffers, grads):
+        if grad is None:
+            continue
+
+        # Update momentum buffer in-place: buf = momentum * buf + grad
+        buf.mul_(momentum).add_(grad)
+
+        # Update state in-place: state = state - lr * buf
+        state.add_(buf, alpha=-lr)

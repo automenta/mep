@@ -194,30 +194,49 @@ class Settler:
                 # Skip check if we just restored (delta would be 0)
                 if prev_energy is not None and not just_restored:
                     delta = abs(current_energy - prev_energy)
-                    if delta < self.tol:
+                    # Use both absolute and relative tolerance for robust convergence detection
+                    rel_tol = self.tol * max(1.0, abs(prev_energy))
+                    if delta < self.tol or delta < rel_tol:
                         patience_counter += 1
                     else:
                         patience_counter = 0
 
                     if patience_counter >= self.patience:
-                        # Converged
+                        # Converged - energy stable for patience steps
                         break
 
                 just_restored = False
                 prev_energy = current_energy
 
                 grads = torch.autograd.grad(E, states, retain_graph=False, allow_unused=True)
-            
-            # SGD step with momentum
+
+            # SGD step with momentum - use fused kernel if available
             with torch.no_grad():
-                for i, (state, g) in enumerate(zip(states, grads)):
-                    if g is None:
-                        continue
-                    
-                    buf = momentum_buffers[i]
-                    buf.mul_(self.MOMENTUM).add_(g)
-                    state.sub_(buf, alpha=current_lr)
-        
+                # Try to use fused CUDA kernel for efficiency
+                try:
+                    from ..cuda.kernels import fused_settle_step_inplace
+                    if states[0].is_cuda:
+                        fused_settle_step_inplace(
+                            states, momentum_buffers, grads,
+                            momentum=self.MOMENTUM, lr=current_lr
+                        )
+                    else:
+                        # CPU fallback
+                        for i, (state, g) in enumerate(zip(states, grads)):
+                            if g is None:
+                                continue
+                            buf = momentum_buffers[i]
+                            buf.mul_(self.MOMENTUM).add_(g)
+                            state.sub_(buf, alpha=current_lr)
+                except ImportError:
+                    # Fallback if cuda module not available
+                    for i, (state, g) in enumerate(zip(states, grads)):
+                        if g is None:
+                            continue
+                        buf = momentum_buffers[i]
+                        buf.mul_(self.MOMENTUM).add_(g)
+                        state.sub_(buf, alpha=current_lr)
+
         return [s.detach() for s in states]
     
     def settle_with_graph(

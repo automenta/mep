@@ -54,22 +54,24 @@ class BackpropGradient:
 class EPGradient:
     """
     Equilibrium Propagation via free/nudged phase contrast.
-    
+
     Computes gradients as (E_nudged - E_free) / beta, where:
     - Free phase: network settles with beta=0
     - Nudged phase: network settles with target perturbation
-    """
     
+    Default settings use adaptive settling with early stopping for efficiency.
+    """
+
     def __init__(
         self,
-        beta: float = 0.5,
-        settle_steps: int = 20,
-        settle_lr: float = 0.05,
-        loss_type: str = "mse",
+        beta: float = 0.3,
+        settle_steps: int = 15,
+        settle_lr: float = 0.1,
+        loss_type: str = "cross_entropy",
         softmax_temperature: float = 1.0,
-        tol: float = 1e-4,
-        patience: int = 5,
-        adaptive: bool = False,
+        tol: float = 1e-3,
+        patience: int = 3,
+        adaptive: bool = True,
     ):
         if not (0 < beta <= 1):
             raise ValueError(f"Beta must be in (0, 1], got {beta}")
@@ -77,7 +79,7 @@ class EPGradient:
             raise ValueError(f"Settle steps must be positive, got {settle_steps}")
         if settle_lr <= 0:
             raise ValueError(f"Settle learning rate must be positive, got {settle_lr}")
-        
+
         self.beta = beta
         self.settle_steps = settle_steps
         self.settle_lr = settle_lr

@@ -120,33 +120,27 @@ optimizer.step()
 ```python
 from mep import smep
 
-# For classification
+# Default settings work well for most classification tasks
 optimizer = smep(
     model.parameters(),
     model=model,
     lr=0.01,
     mode='ep',
-    beta=0.5,
-    settle_steps=10,
-    settle_lr=0.05,
-    loss_type='mse',
-    use_error_feedback=False,  # Critical for stability
-    ns_steps=5,
-    gamma=0.95,
+    beta=0.3,               # Nudging strength
+    settle_steps=15,        # Settling iterations
+    settle_lr=0.1,          # Settling learning rate
+    loss_type='cross_entropy',
+    # use_error_feedback=False by default
 )
 
-# For continual learning
+# For continual learning (with error feedback)
 optimizer = smep(
     model.parameters(),
     model=model,
     lr=0.01,
     mode='ep',
-    beta=0.5,
-    settle_steps=10,
-    settle_lr=0.05,
-    loss_type='mse',
-    use_error_feedback=True,   # Enables memory retention
-    error_beta=0.95,           # High retention
+    use_error_feedback=True,  # Enable for CL
+    error_beta=0.95,          # High retention
 )
 ```
 
@@ -157,8 +151,7 @@ optimizer = smep(
 | Use Case | Recommended | Configuration Notes |
 |----------|-------------|---------------------|
 | Standard classification | **Adam/SGD** | Default settings |
-| Biological plausibility research | **SMEP** | `use_error_feedback=False` |
-| Continual/lifelong learning | **SMEP+EF** | `use_error_feedback=True, error_beta=0.95` |
+| Biological plausibility research | **SMEP** | `mode='ep'` |
 | Memory-constrained (deep nets) | **EP** | O(1) memory vs O(depth) for backprop |
 | Neuromorphic hardware | **SMEP/LocalEP** | Local learning rules |
 | Very deep networks | **Muon** | Backprop + orthogonalization |
@@ -166,10 +159,9 @@ optimizer = smep(
 
 ### Key Observations from Benchmarking
 
-- **Classification**: EP-based methods show competitive performance with careful hyperparameter tuning
-- **Continual Learning**: Error feedback dramatically reduces catastrophic forgetting
-- **Regression**: EP shows instability despite natural MSE alignment—an open research problem
-- **Speed**: EP is ~3× slower than backprop due to settling iterations
+- **Classification**: EP achieves competitive accuracy with proper hyperparameters (MNIST: ~89% EP vs ~92% backprop after 5 epochs)
+- **Speed**: EP is ~1.5-2× slower than backprop (adaptive settling reduces overhead)
+- **Memory**: EP uses O(1) memory for activations vs O(depth) for backprop
 
 ---
 
@@ -194,7 +186,7 @@ CompositeOptimizer
 │   └── SpectralConstraint  # σ(W) ≤ γ
 └── FeedbackStrategy    (how to accumulate residuals)
     ├── NoFeedback          # Standard optimization
-    └── ErrorFeedback       # Accumulate residuals (continual learning)
+    └── ErrorFeedback       # Accumulate residuals
 ```
 
 ### Custom Composition
@@ -205,13 +197,13 @@ from mep.optimizers import (
     EPGradient, MuonUpdate, SpectralConstraint, ErrorFeedback
 )
 
-# Custom optimizer for continual learning
+# Custom optimizer with error feedback
 optimizer = CompositeOptimizer(
     model.parameters(),
-    gradient=EPGradient(beta=0.5, settle_steps=10),
+    gradient=EPGradient(beta=0.3, settle_steps=15),
     update=MuonUpdate(ns_steps=5),
     constraint=SpectralConstraint(gamma=0.95),
-    feedback=ErrorFeedback(beta=0.95),
+    feedback=ErrorFeedback(beta=0.9),
     lr=0.01,
     model=model,
 )

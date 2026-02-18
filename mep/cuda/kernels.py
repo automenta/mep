@@ -8,7 +8,7 @@ This module provides optimized CUDA kernels for:
 """
 
 import torch
-from typing import Tuple, Optional
+from typing import Tuple, Optional, cast
 
 
 def lowrank_svd_cuda(
@@ -148,7 +148,7 @@ def newton_schulz_cuda(
     if transposed:
         X = X.T
 
-    return X
+    return cast(torch.Tensor, X)
 
 
 def spectral_norm_power_iteration_cuda(
@@ -203,7 +203,7 @@ def spectral_norm_power_iteration_cuda(
     # Compute spectral norm
     sigma = torch.dot(u, torch.mv(W, v)).abs()
 
-    return sigma, u, v
+    return cast(torch.Tensor, sigma), u, v
 
 
 def enforce_spectral_constraint_cuda(
@@ -298,4 +298,4 @@ def batched_newton_schulz_cuda(
     if transposed:
         X = X.transpose(1, 2)
 
-    return X
+    return cast(torch.Tensor, X)

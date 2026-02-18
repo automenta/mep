@@ -180,7 +180,7 @@ class EPGradient:
             amp_context = torch.amp.autocast(device_type=device_type, enabled=False)
         else:
             from contextlib import nullcontext
-            amp_context = nullcontext()
+            amp_context = nullcontext() # type: ignore
 
         with torch.enable_grad():
             with amp_context:

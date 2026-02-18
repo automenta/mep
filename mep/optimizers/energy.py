@@ -61,7 +61,8 @@ class EnergyFunction:
         
         use_classification = self.loss_type == "cross_entropy"
         
-        E = torch.tensor(0.0, device=x.device, dtype=x.dtype)
+        # Accumulate energy in float32 for stability
+        E = torch.tensor(0.0, device=x.device, dtype=torch.float32)
         prev = x
         state_idx = 0
         
@@ -94,12 +95,13 @@ class EnergyFunction:
                 
                 if use_classification and is_last_state:
                     # KL divergence for classification output
-                    E = E + self._kl_energy(state, h, batch_size)
+                    # Cast h to float32 for stable energy calculation
+                    E = E + self._kl_energy(state.float(), h.float(), batch_size)
                 else:
                     # MSE for hidden layers and regression
                     self._validate_shapes(h, state, f"Layer {state_idx} ({type(module).__name__})")
-                    # Ensure state matches prediction dtype (e.g. if state is BF16 from AMP but h is FP32)
-                    E = E + 0.5 * self._safe_mse(h, state.to(h.dtype)) / batch_size
+                    # Compute MSE in float32
+                    E = E + 0.5 * self._safe_mse(h.float(), state.float()) / batch_size
                 
                 # The input to the next layer is the current state (relaxed variable)
                 # Ensure dtype matches input x to prevent type mismatch with weights
@@ -143,7 +145,8 @@ class EnergyFunction:
                     h = module(prev)
                 
                 self._validate_shapes(h, state, f"Attention Layer {state_idx}")
-                E = E + 0.5 * self._safe_mse(h, state.to(h.dtype)) / batch_size
+                # Compute MSE in float32
+                E = E + 0.5 * self._safe_mse(h.float(), state.float()) / batch_size
                 prev = state.to(x.dtype)
                 state_idx += 1
             
@@ -152,7 +155,8 @@ class EnergyFunction:
 
         # Nudge term
         if target_vec is not None and beta > 0:
-            E = E + self._nudge_term(prev, target_vec, beta, batch_size)
+            # Nudge term in float32
+            E = E + self._nudge_term(prev.float(), target_vec, beta, batch_size)
         
         # Stability check
         if torch.isnan(E) or torch.isinf(E):

@@ -285,10 +285,12 @@ class Settler:
         handles: List[Any] = []
         
         def capture_hook(module: nn.Module, inp: Any, output: Any) -> None:
+            # Capture state in float32 for stability
             if isinstance(output, tuple):
-                states.append(output[0].detach().clone())
+                s = output[0].detach().float().clone()
             else:
-                states.append(output.detach().clone())
+                s = output.detach().float().clone()
+            states.append(s)
         
         for item in structure:
             if item["type"] in ("layer", "attention"):
@@ -314,10 +316,12 @@ class Settler:
         handles: List[Any] = []
         
         def capture_hook(module: nn.Module, inp: Any, output: Any) -> None:
+            # Capture state in float32 for stability during settling updates
             if isinstance(output, tuple):
-                states.append(output[0].detach().clone().requires_grad_(True))
+                s = output[0].detach().float().clone().requires_grad_(True)
             else:
-                states.append(output.detach().clone().requires_grad_(True))
+                s = output.detach().float().clone().requires_grad_(True)
+            states.append(s)
         
         for item in structure:
             if item["type"] in ("layer", "attention"):

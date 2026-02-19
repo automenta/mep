@@ -46,6 +46,19 @@ from .strategies import (
 from .energy import EnergyFunction
 from .settling import Settler
 from .inspector import ModelInspector
+from .o1_memory import (
+    manual_energy_compute,
+    settle_manual,
+    energy_from_states,
+    O1MemoryEP,
+)
+from .o1_memory_v2 import (
+    analytic_state_gradients,
+    settle_manual_o1,
+    manual_energy_compute_o1,
+    energy_from_states_minimal,
+    O1MemoryEPv2,
+)
 
 __all__ = [
     # Core optimizer
@@ -76,4 +89,15 @@ __all__ = [
     "EnergyFunction",
     "Settler",
     "ModelInspector",
+    # O(1) memory prototype v1
+    "manual_energy_compute",
+    "settle_manual",
+    "energy_from_states",
+    "O1MemoryEP",
+    # O(1) memory prototype v2 (analytic gradients)
+    "analytic_state_gradients",
+    "settle_manual_o1",
+    "manual_energy_compute_o1",
+    "energy_from_states_minimal",
+    "O1MemoryEPv2",
 ]

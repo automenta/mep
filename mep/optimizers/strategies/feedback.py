@@ -8,7 +8,7 @@ Implements various feedback methods:
 
 import torch
 import torch.nn as nn
-from typing import Any
+from typing import Any, cast
 from .base import FeedbackStrategy
 
 
@@ -86,7 +86,7 @@ class ErrorFeedback:
         if "error_buffer" not in state:
             state["error_buffer"] = torch.zeros_like(gradient)
         
-        buffer = state["error_buffer"]
+        buffer = cast(torch.Tensor, state["error_buffer"])
         return gradient + self.beta * buffer
     
     def update_buffer(

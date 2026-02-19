@@ -10,7 +10,7 @@ Implements various methods for transforming gradients into updates:
 
 import torch
 import torch.nn as nn
-from typing import Optional, Any
+from typing import Optional, Any, cast
 from .base import UpdateStrategy
 
 # Import CUDA kernels if available
@@ -58,10 +58,19 @@ class MuonUpdate:
         state: dict,
         group_config: dict
     ) -> torch.Tensor:
-        if gradient.ndim != 2:
+        orig_shape = None
+        if gradient.ndim > 2:
+            orig_shape = gradient.shape
+            gradient = gradient.view(gradient.shape[0], -1)
+        elif gradient.ndim < 2:
             return gradient
+
+        update = self._newton_schulz(gradient, self.ns_steps)
         
-        return self._newton_schulz(gradient, self.ns_steps)
+        if orig_shape is not None:
+            update = update.view(orig_shape)
+
+        return update
     
     def _newton_schulz(
         self,
@@ -71,7 +80,7 @@ class MuonUpdate:
     ) -> torch.Tensor:
         """Newton-Schulz orthogonalization."""
         if CUDA_AVAILABLE and G.is_cuda:
-            return newton_schulz_cuda(G, steps=steps, epsilon=epsilon)
+            return cast(torch.Tensor, newton_schulz_cuda(G, steps=steps, epsilon=epsilon))
         
         r, c = G.shape
         transposed = False
@@ -95,7 +104,7 @@ class MuonUpdate:
         if transposed:
             X = X.T
         
-        return X
+        return cast(torch.Tensor, X)
 
 
 class DionUpdate:
@@ -206,10 +215,12 @@ class FisherUpdate:
         damping: float = 1e-3,
         ns_steps: int = 5,
         use_diagonal: bool = False,
+        beta: float = 0.95,
     ):
         self.damping = damping
         self.ns_steps = ns_steps
         self.use_diagonal = use_diagonal
+        self.beta = beta
     
     def transform_gradient(
         self,
@@ -218,10 +229,24 @@ class FisherUpdate:
         state: dict,
         group_config: dict
     ) -> torch.Tensor:
-        if gradient.ndim != 2:
+        # Handle ND tensors by flattening
+        orig_shape = None
+        if gradient.ndim > 2:
+            orig_shape = gradient.shape
+            gradient = gradient.view(gradient.shape[0], -1)
+        elif gradient.ndim < 2:
             return gradient
+
+        # Check for new Fisher estimate on parameter
+        if hasattr(param, "fisher"):
+            fisher_estimate = getattr(param, "fisher")
+            delattr(param, "fisher")  # Consume it
+
+            if "fisher" not in state:
+                state["fisher"] = fisher_estimate
+            else:
+                state["fisher"].mul_(self.beta).add_(fisher_estimate, alpha=1 - self.beta)
         
-        # Get Fisher information from state (computed by NaturalGradient)
         fisher = state.get("fisher")
         
         if fisher is not None:
@@ -243,7 +268,12 @@ class FisherUpdate:
         else:
             whitened = gradient
         
-        return self._newton_schulz(whitened, self.ns_steps)
+        update = self._newton_schulz(whitened, self.ns_steps)
+
+        if orig_shape is not None:
+            update = update.view(orig_shape)
+
+        return update
     
     def _newton_schulz(
         self,
@@ -253,7 +283,7 @@ class FisherUpdate:
     ) -> torch.Tensor:
         """Newton-Schulz orthogonalization."""
         if CUDA_AVAILABLE and G.is_cuda:
-            return newton_schulz_cuda(G, steps=steps, epsilon=epsilon)
+            return cast(torch.Tensor, newton_schulz_cuda(G, steps=steps, epsilon=epsilon))
         
         r, c = G.shape
         transposed = False
@@ -275,4 +305,4 @@ class FisherUpdate:
         if transposed:
             X = X.T
         
-        return X
+        return cast(torch.Tensor, X)

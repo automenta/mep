@@ -25,7 +25,6 @@ class MetricsTracker:
 
     def start_epoch(self) -> None:
         """Mark the start of an epoch."""
-        self.metrics['epoch_time_accum'] = 0.0
         self.epoch_start_time = time.time()
 
     def end_epoch(self) -> None:
@@ -89,7 +88,7 @@ class MetricsTracker:
 
         # Add epoch time if available
         if 'epoch_time' in self.metrics and self.metrics['epoch_time']:
-            epoch_metrics['epoch_time'] = self.metrics['epoch_time'][-1]
+            epoch_metrics['epoch_time'] = float(self.metrics['epoch_time'][-1])
 
         return epoch_metrics
 

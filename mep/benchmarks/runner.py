@@ -11,7 +11,7 @@ import time
 import argparse
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Union, cast
 from dataclasses import dataclass, field, asdict
 
 import torch
@@ -33,7 +33,7 @@ try:
 except ImportError:
     VIS_AVAILABLE = False
 
-from mep.optimizers import SMEPOptimizer, SDMEPOptimizer
+from mep.presets import smep, sdmep
 
 
 @dataclass
@@ -84,7 +84,7 @@ def load_config(config_path: str) -> Dict[str, Any]:
     
     # Handle defaults inheritance
     if 'defaults' in config:
-        base_config = {}
+        base_config: Dict[str, Any] = {}
         for default in config['defaults']:
             if isinstance(default, dict):
                 for key, value in default.items():
@@ -100,7 +100,7 @@ def load_config(config_path: str) -> Dict[str, Any]:
         config = _merge_configs(base_config, config)
         del config['defaults']
     
-    return config
+    return cast(Dict[str, Any], config)
 
 
 def _merge_configs(base: Dict, override: Dict) -> Dict:
@@ -116,7 +116,7 @@ def _merge_configs(base: Dict, override: Dict) -> Dict:
 
 def create_model(architecture: List[Dict[str, Any]], device: torch.device) -> nn.Module:
     """Create model from architecture specification."""
-    layers = []
+    layers: List[nn.Module] = []
     
     for layer_spec in architecture:
         # Make a copy to avoid modifying original config
@@ -159,17 +159,18 @@ def get_dataloader(
     root: str = './data',
     subset_size: Optional[int] = None,
     num_workers: int = 4,
-    device: torch.device = None
+    device: Optional[torch.device] = None
 ) -> Tuple[DataLoader, DataLoader]:
     """Create train and test dataloaders."""
     
+    mean: Tuple[float, ...]
+    std: Tuple[float, ...]
+
     # Normalize based on dataset
     if dataset_name.upper() in ['MNIST', 'FASHIONMNIST']:
         mean, std = (0.5,), (0.5,)
-        channels = 1
     else:  # CIFAR10, CIFAR100
         mean, std = (0.5, 0.5, 0.5), (0.5, 0.5, 0.5)
-        channels = 3
     
     transform_train = transforms.Compose([
         transforms.ToTensor(),
@@ -199,7 +200,7 @@ def get_dataloader(
     # Subset for faster benchmarking
     if subset_size and subset_size < len(train_dataset):
         indices = torch.randperm(len(train_dataset))[:subset_size]
-        train_dataset = torch.utils.data.Subset(train_dataset, indices)
+        train_dataset = torch.utils.data.Subset(train_dataset, indices.tolist())
     
     train_loader = DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True,
@@ -253,7 +254,7 @@ def create_optimizer(
         )
     
     elif optimizer_name == 'SMEP':
-        return SMEPOptimizer(
+        return smep(
             model.parameters(),
             model=model,
             mode='ep',
@@ -267,11 +268,10 @@ def create_optimizer(
             use_error_feedback=all_config.get('use_error_feedback', True),
             error_beta=all_config.get('error_beta', 0.9),
             loss_type=all_config.get('loss_type', 'cross_entropy'),
-            max_grad_norm=all_config.get('max_grad_norm', 10.0)
         )
     
     elif optimizer_name == 'SDMEP':
-        return SDMEPOptimizer(
+        return sdmep(
             model.parameters(),
             model=model,
             mode='ep',
@@ -287,7 +287,6 @@ def create_optimizer(
             loss_type=all_config.get('loss_type', 'cross_entropy'),
             rank_frac=all_config.get('rank_frac', 0.2),
             dion_thresh=all_config.get('dion_thresh', 100000),
-            max_grad_norm=all_config.get('max_grad_norm', 10.0)
         )
     
     else:
@@ -314,7 +313,8 @@ def train_epoch(
         
         if is_ep:
             # EP mode
-            optimizer.step(x=x, target=y)
+            # Type ignore because 'step' arguments vary
+            optimizer.step(x=x, target=y) # type: ignore
             
             # Compute loss for logging (extra forward pass)
             with torch.no_grad():
@@ -333,8 +333,8 @@ def train_epoch(
         correct += (pred == y).sum().item()
         total += x.size(0)
     
-    avg_loss = total_loss / total
-    accuracy = 100.0 * correct / total
+    avg_loss = total_loss / total if total > 0 else 0.0
+    accuracy = 100.0 * correct / total if total > 0 else 0.0
     
     return avg_loss, accuracy
 
@@ -361,8 +361,8 @@ def evaluate(
         correct += (pred == y).sum().item()
         total += x.size(0)
     
-    avg_loss = total_loss / total
-    accuracy = 100.0 * correct / total
+    avg_loss = total_loss / total if total > 0 else 0.0
+    accuracy = 100.0 * correct / total if total > 0 else 0.0
     
     return avg_loss, accuracy
 
@@ -382,7 +382,7 @@ def get_spectral_norm(model: nn.Module, device: torch.device) -> float:
                 v = F.normalize(torch.mv(weight.T, u), dim=0, eps=1e-8)
                 u = F.normalize(torch.mv(weight, v), dim=0, eps=1e-8)
             
-            return torch.dot(u, torch.mv(weight, v)).item()
+            return float(torch.dot(u, torch.mv(weight, v)).item())
     
     return 0.0
 
@@ -473,7 +473,10 @@ def plot_results(
         return
     
     # Set style
-    sns.set_style("whitegrid")
+    try:
+        sns.set_style("whitegrid")
+    except:
+        pass
     plt.rcParams['figure.figsize'] = (12, 8)
     
     # Extract data
@@ -547,7 +550,8 @@ def plot_results(
     times = [r.total_time for r in results]
     
     # Normalize times for display
-    max_time = max(times)
+    max_time = max(times) if times else 1.0
+    if max_time == 0: max_time = 1.0
     
     ax2 = ax.twinx()
     
@@ -558,7 +562,7 @@ def plot_results(
     ax.set_ylabel('Best Validation Accuracy (%)', color='steelblue')
     ax2.set_ylabel('Time (normalized, %)', color='coral')
     ax.set_title('Optimizer Comparison: Accuracy vs Time')
-    ax.set_xticks(x)
+    ax.set_xticks(list(x))
     ax.set_xticklabels(optimizer_names)
     
     # Add value labels
@@ -622,7 +626,7 @@ def run_all_benchmarks(config: Dict[str, Any]) -> List[BenchmarkResult]:
     return results
 
 
-def main():
+def main() -> None:
     """Main entry point for benchmark runner."""
     parser = argparse.ArgumentParser(description='MEP Benchmark Runner')
     parser.add_argument('--config', type=str, required=True,
@@ -669,12 +673,6 @@ def main():
     # Aggregate results if multiple repeats
     if repeats > 1:
         # Group by optimizer and compute statistics
-        grouped = {}
-        for r in all_results:
-            if r.optimizer_name not in grouped:
-                grouped[r.optimizer_name] = []
-            grouped[r.optimizer_name].append(r)
-        
         # For simplicity, just use the last run for plots
         final_results = results
     else:

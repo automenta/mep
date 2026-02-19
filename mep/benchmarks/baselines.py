@@ -5,18 +5,19 @@ Provides factory function to get optimizer instances by name.
 Includes both standard PyTorch optimizers (baselines) and EP-based optimizers.
 """
 
-from typing import Tuple, Any
+from typing import Tuple, Any, Dict
+import torch.nn as nn
 import torch.optim as optim
 from mep import smep, sdmep, local_ep, natural_ep, muon_backprop
 
 
 def get_optimizer(
     name: str,
-    model: Any,
+    model: nn.Module,
     lr: float = 0.01,
     momentum: float = 0.9,
     weight_decay: float = 0.0005,
-    **kwargs
+    **kwargs: Any
 ) -> Tuple[Any, bool]:
     """
     Get optimizer by name.
@@ -71,6 +72,7 @@ def get_optimizer(
             beta=kwargs.get('beta', 0.5),
             settle_steps=kwargs.get('settle_steps', 10),
             settle_lr=kwargs.get('settle_lr', 0.05),
+            loss_type=kwargs.get('loss_type', 'mse'),
             use_error_feedback=False
         ), True
 
@@ -85,7 +87,7 @@ def get_optimizer(
             gamma=kwargs.get('gamma', 0.95),
             ns_steps=kwargs.get('ns_steps', 5),
             error_beta=kwargs.get('error_beta', 0.9),
-            use_error_feedback=kwargs.get('use_error_feedback', True),
+            use_error_feedback=kwargs.get('use_error_feedback', False),  # Disabled for stability
             loss_type=kwargs.get('loss_type', 'mse')
         ), True
 
@@ -101,6 +103,7 @@ def get_optimizer(
             rank_frac=kwargs.get('rank_frac', 0.2),
             dion_thresh=kwargs.get('dion_thresh', 100000),
             error_beta=kwargs.get('error_beta', 0.9),
+            use_error_feedback=False,  # Disabled for classification stability
             loss_type=kwargs.get('loss_type', 'mse')
         ), True
 

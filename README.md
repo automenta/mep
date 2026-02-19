@@ -8,84 +8,7 @@
 
 ---
 
-## 📄 Abstract
-
-**Equilibrium Propagation (EP)** offers a biologically plausible alternative to backpropagation by estimating gradients through the contrast between two equilibrium states of an energy-based model. However, historical implementations have suffered from training instability, poor convergence, and impractical computational requirements—preventing EP from scaling to modern deep learning tasks.
-
-We present **Spectral Dion-Muon Equilibrium Propagation (SDMEP)**, a refactored optimization framework that addresses these limitations through three key innovations:
-
-1.  **Spectral Constraints (S):** Enforcing σ(W) ≤ γ < 1 guarantees convergence to a unique fixed point, eliminating the oscillatory divergence that plagued earlier EP implementations.
-2.  **Dion Low-Rank Updates (D):** For large weight matrices, low-rank SVD with error feedback reduces computational cost while preserving gradient information in the dominant subspace.
-3.  **Muon Orthogonalization (M):** Newton-Schulz iteration orthogonalizes gradients, improving conditioning and enabling stable training at greater depths.
-
-This framework is designed as a research platform for exploring biologically plausible learning, neuromorphic computing, continual learning, and energy-efficient deep learning on analog hardware.
-
-**Keywords:** Equilibrium Propagation, Biologically Plausible Learning, Energy-Based Models, Spectral Normalization, Low-Rank Optimization, Neuromorphic Computing, Continual Learning
-
----
-
-## 📋 Table of Contents
-
-- [Abstract](#-abstract)
-- [Introduction](#-introduction-the-backpropagation-bottleneck)
-- [The MEP Framework](#-the-mep-framework)
-- [Quick Start](#-quick-start)
-- [Optimizer Selection Guide](#-optimizer-selection-guide)
-- [Architecture: Strategy Pattern](#-architecture-strategy-pattern)
-- [Understanding EP](#-understanding-ep-a-visual-guide)
-- [References](#-references)
-
----
-
-## 🌍 Introduction: The Backpropagation Bottleneck
-
-Backpropagation has powered the deep learning revolution, but it faces fundamental limitations:
-
-| Problem | Why It Matters |
-|---------|----------------|
-| **Biological Implausibility** | Requires symmetric forward/backward weights ("weight transport problem") and global error signals—neither observed in biological neural circuits. |
-| **Memory Scaling** | Activation storage grows linearly with depth, limiting training of very deep networks on memory-constrained hardware. |
-| **Hardware Mismatch** | Digital backpropagation is energy-inefficient on emerging analog/neuromorphic substrates (optical chips, memristor arrays). |
-
-**Equilibrium Propagation** (Scellier & Bengio, 2017) addresses these issues by:
-- Using only **local Hebbian updates** derived from an energy function
-- Achieving **O(1) memory cost** independent of network depth
-- Mapping naturally to **continuous-time dynamics** in analog hardware
-
-However, vanilla EP is notoriously unstable. **SDMEP** provides the "safety harness" that makes EP practical for deep learning research.
-
----
-
-## 🔬 The MEP Framework
-
-### Theoretical Foundation
-
-MEP is built on the theory of **Energy Based Models (EBMs)** with contractive dynamics. Given an input x and network states s = {s₁, ..., sₗ}, we define the energy:
-
-```
-E(x, s, y) = E_internal + E_external
-
-E_internal = 0.5 × Σ ||sᵢ - fᵢ(sᵢ₋₁)||²     (state consistency)
-E_external = β × L(s_last, y)                (task loss)
-```
-
-**Free phase** (β = 0): States settle to minimize E_internal, reaching a fixed point s*.
-
-**Nudged phase** (β > 0): The target y perturbs the energy landscape, yielding a new fixed point s^β.
-
-**EP Gradient:** The contrast (s^β - s*) / β approximates ∂L/∂W without backpropagation.
-
-### The Safety Harness: S-D-M
-
-| Component | Purpose | Mechanism |
-|-----------|---------|-----------|
-| **Spectral (S)** | Stability | Power iteration enforces σ(W) ≤ γ, ensuring contractive dynamics and unique fixed points. |
-| **Dion (D)** | Efficiency | Low-rank SVD (U Σ V^T) with error feedback for matrices >100K parameters. |
-| **Muon (M)** | Conditioning | Newton-Schulz iteration orthogonalizes gradients: X_{k+1} = ½ X_k (3I - X_k^T X_k). |
-
----
-
-## 🔧 Quick Start
+## Quick Start
 
 ### Installation
 
@@ -97,7 +20,7 @@ pip install -e .
 
 ```python
 import torch.nn as nn
-from mep import smep, sdmep, muon_backprop
+from mep import smep, muon_backprop
 
 model = nn.Sequential(
     nn.Linear(784, 256),
@@ -109,241 +32,130 @@ model = nn.Sequential(
 optimizer = smep(model.parameters(), model=model, mode='ep')
 optimizer.step(x=x, target=y)  # No .backward() needed!
 
-# Option 2: Backprop mode (drop-in SGD replacement)
+# Option 2: Backprop mode (drop-in replacement)
 optimizer = muon_backprop(model.parameters())
 loss.backward()
 optimizer.step()
 ```
 
-### Recommended Configuration
+### Optimal EP Configuration
 
 ```python
 from mep import smep
 
-# For classification
 optimizer = smep(
     model.parameters(),
     model=model,
     lr=0.01,
     mode='ep',
-    beta=0.5,
-    settle_steps=10,
-    settle_lr=0.05,
-    loss_type='mse',
-    use_error_feedback=False,  # Critical for stability
-    ns_steps=5,
-    gamma=0.95,
-)
-
-# For continual learning
-optimizer = smep(
-    model.parameters(),
-    model=model,
-    lr=0.01,
-    mode='ep',
-    beta=0.5,
-    settle_steps=10,
-    settle_lr=0.05,
-    loss_type='mse',
-    use_error_feedback=True,   # Enables memory retention
-    error_beta=0.95,           # High retention
+    beta=0.5,           # Nudging strength
+    settle_steps=30,    # Settling iterations
+    settle_lr=0.15,     # Settling learning rate
+    loss_type='mse',    # Stable energy
+    use_error_feedback=False,
 )
 ```
 
 ---
 
-## 🎯 Optimizer Selection Guide
+## Performance Summary
 
-| Use Case | Recommended | Configuration Notes |
-|----------|-------------|---------------------|
-| Standard classification | **Adam/SGD** | Default settings |
-| Biological plausibility research | **SMEP** | `use_error_feedback=False` |
-| Continual/lifelong learning | **SMEP+EF** | `use_error_feedback=True, error_beta=0.95` |
-| Memory-constrained (deep nets) | **EP** | O(1) memory vs O(depth) for backprop |
-| Neuromorphic hardware | **SMEP/LocalEP** | Local learning rules |
-| Very deep networks | **Muon** | Backprop + orthogonalization |
-| Large models (>1M params/layer) | **SDMEP** | `dion_thresh=200000` |
+| Benchmark | EP | SGD | Adam |
+|-----------|-----|-----|------|
+| MNIST (3 epoch) | **91.4%** | 91.0% | 90.2% |
+| MNIST (10 epoch) | 95.37% | 93.80% | **95.75%** |
+| XOR (100 step) | 100% | 100% | 100% |
 
-### Key Observations from Benchmarking
+**Key Findings:**
+- ✅ EP achieves performance parity with backpropagation
+- ⚠️ EP is ~2× slower (fundamental algorithmic cost)
+- ⚠️ EP uses more memory than backprop+checkpointing
+- ❌ Dropout incompatible with EP settling
 
-- **Classification**: EP-based methods show competitive performance with careful hyperparameter tuning
-- **Continual Learning**: Error feedback dramatically reduces catastrophic forgetting
-- **Regression**: EP shows instability despite natural MSE alignment—an open research problem
-- **Speed**: EP is ~3× slower than backprop due to settling iterations
+📊 **Full results:** [docs/benchmarks/VALIDATION_RESULTS.md](docs/benchmarks/VALIDATION_RESULTS.md)
 
 ---
 
-## 🏗️ Architecture: Strategy Pattern
+## When to Use EP
 
-The refactored MEP uses a **strategy pattern** for maximum flexibility and extensibility:
+### ✅ Use EP For:
+- Biological plausibility research
+- Neuromorphic hardware deployment
+- Energy-based model research
+- Educational demonstrations
+- Studying alternative learning mechanisms
 
-```
-CompositeOptimizer
-├── GradientStrategy    (how to compute ∇L)
-│   ├── BackpropGradient    # Standard .backward()
-│   ├── EPGradient          # Free/nudged phase contrast
-│   ├── LocalEPGradient     # Layer-local updates only
-│   └── NaturalGradient     # Fisher Information whitening
-├── UpdateStrategy      (how to transform ∇L → ΔW)
-│   ├── PlainUpdate         # Vanilla SGD
-│   ├── MuonUpdate          # Newton-Schulz orthogonalization
-│   ├── DionUpdate          # Low-rank SVD for large matrices
-│   └── FisherUpdate        # Natural gradient descent
-├── ConstraintStrategy  (how to enforce constraints)
-│   ├── NoConstraint        # Unconstrained
-│   └── SpectralConstraint  # σ(W) ≤ γ
-└── FeedbackStrategy    (how to accumulate residuals)
-    ├── NoFeedback          # Standard optimization
-    └── ErrorFeedback       # Accumulate residuals (continual learning)
-```
+### ✅ Use Backprop For:
+- Standard classification/regression
+- Production training pipelines
+- Speed-critical applications
+- Maximum accuracy goals
 
-### Custom Composition
-
-```python
-from mep.optimizers import (
-    CompositeOptimizer,
-    EPGradient, MuonUpdate, SpectralConstraint, ErrorFeedback
-)
-
-# Custom optimizer for continual learning
-optimizer = CompositeOptimizer(
-    model.parameters(),
-    gradient=EPGradient(beta=0.5, settle_steps=10),
-    update=MuonUpdate(ns_steps=5),
-    constraint=SpectralConstraint(gamma=0.95),
-    feedback=ErrorFeedback(beta=0.95),
-    lr=0.01,
-    model=model,
-)
-```
-
-### Debugging with EPMonitor
-
-```python
-from mep import smep, EPMonitor
-
-monitor = EPMonitor()
-optimizer = smep(model.parameters(), model=model, mode='ep')
-
-for epoch in range(epochs):
-    monitor.start_epoch()
-    
-    for x, y in train_loader:
-        optimizer.step(x=x, target=y)
-    
-    metrics = monitor.end_epoch(model, optimizer)
-    print(f"Epoch {epoch}: Energy gap = {metrics.energy_gap:.4f}")
-    
-    if not monitor.check_convergence():
-        print("Warning: Settling may not have converged!")
-
-print(monitor.summary())
-```
+📋 **Detailed guidance:** [docs/research/ROADMAP_RESEARCH.md](docs/research/ROADMAP_RESEARCH.md)
 
 ---
 
-## 🔮 Understanding EP: A Visual Guide
+## Documentation
 
-### Free Phase vs Nudged Phase
-
-```
-Free Phase (β = 0):
-Input → [Layer 1] → [Layer 2] → [Layer 3] → Output
-         │  ▲        │  ▲        │  ▲
-         │  │        │  │        │  │
-         └──┴────────┴──┴────────┴──┘
-              States settle to minimize E_internal
-
-Nudged Phase (β > 0):
-Input → [Layer 1] → [Layer 2] → [Layer 3] → Output
-         │  ▲        │  ▲        │  ▲         │
-         │  │        │  │        │  │         │ (target nudges)
-         └──┴────────┴──┴────────┴──┴─────────┘
-              Target perturbs energy landscape
-
-EP Gradient = (nudged_states - free_states) / β
-```
-
-### Energy Function
-
-```
-E = E_internal + E_external
-
-E_internal = 0.5 × Σ ||sᵢ - fᵢ(sᵢ₋₁)||²   (state consistency)
-E_external = β × L(s_last, y)             (task loss)
-
-For classification with MSE:
-  L = ||s_last - one_hot(y)||²
-
-For classification with CrossEntropy:
-  L = CrossEntropy(softmax(s_last), y)
-```
+| Document | Description |
+|----------|-------------|
+| [docs/index.md](docs/index.md) | **Start here** - Full documentation index |
+| [docs/benchmarks/PERFORMANCE_BASELINES.md](docs/benchmarks/PERFORMANCE_BASELINES.md) | Performance thresholds, optimal config |
+| [docs/benchmarks/VALIDATION_RESULTS.md](docs/benchmarks/VALIDATION_RESULTS.md) | Full validation study |
+| [docs/research/ROADMAP_RESEARCH.md](docs/research/ROADMAP_RESEARCH.md) | Research trajectory, partnerships |
+| [docs/methods_paper.md](docs/methods_paper.md) | Preprint-ready methods paper |
 
 ---
 
-## 📚 References
+## Examples
 
-1.  Scellier, B., & Bengio, Y. (2017). Equilibrium Propagation: Bridging the Gap Between Energy-Based Models and Backpropagation. *Frontiers in Computational Neuroscience*, 11, 24.
-
-2.  Jordan, K. (2024). The Muon Optimizer. *GitHub Repository*. https://github.com/KellerJordan/Muon
-
-3.  Miyato, T., Kataoka, T., Koyama, M., & Yoshida, Y. (2018). Spectral Normalization for Generative Adversarial Networks. *ICLR*.
-
-4.  Scellier, B., Franceschi, L., & Bengio, Y. (2024). Energy-Based Learning in Continuous Time. *arXiv preprint*.
-
-5.  Lillicrap, T. P., Santoro, A., Marris, L., Akerman, C. J., & Hinton, G. (2020). Backpropagation and the Brain. *Nature Reviews Neuroscience*, 21(6), 335-346.
-
-6.  Goodfellow, I., Bengio, Y., & Courville, A. (2016). *Deep Learning*. MIT Press.
-
-7.  Kirkpatrick, J., et al. (2017). Overcoming Catastrophic Forgetting in Neural Networks. *PNAS*, 114(13), 3521-3526.
+| Example | Description |
+|---------|-------------|
+| `examples/quickstart.py` | Minimal working example |
+| `examples/demo_ep_vs_backprop.py` | EP vs backprop comparison |
+| `examples/mnist_comparison.py` | MNIST classification demo |
+| `examples/train_char_lm.py` | Character-level LM training |
 
 ---
 
-## 📁 Module Structure
-
-```
-mep/
-├── optimizers/
-│   ├── composite.py       # Main CompositeOptimizer
-│   ├── strategies/
-│   │   ├── gradient.py    # Backprop, EP, LocalEP, Natural
-│   │   ├── update.py      # Muon, Dion, Fisher
-│   │   ├── constraint.py  # Spectral norm
-│   │   └── feedback.py    # Error feedback
-│   ├── energy.py          # Energy function
-│   ├── settling.py        # Settling dynamics
-│   ├── monitor.py         # EP debugging utilities
-│   └── inspector.py       # Model structure extraction
-├── presets/
-│   └── __init__.py        # Factory functions (smep, sdmep, etc.)
-├── benchmarks/
-│   ├── tuned_compare.py   # Classification benchmarks
-│   └── niche_benchmarks.py # Regression, continual learning
-├── cuda/
-│   └── kernels.py         # CUDA-accelerated operations
-└── optimizers_legacy.py   # Archived original implementation
-```
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! High-priority areas:
-
-1.  **Fix regression instability** - EP should excel here
-2.  **Adaptive settling** - Early stopping for speedup
-3.  **SDMEP tuning** - Better rank selection for large models
-4.  **Continual learning benchmarks** - More task sequences, domains
-5.  **Hardware demos** - Neuromorphic chip implementations
+## Testing
 
 ```bash
-# Development setup
-pip install -e ".[dev]"
+# Run all tests
 pytest tests/ -v
+
+# Run performance regression tests
+pytest tests/regression/test_performance_baseline.py -v
 ```
 
 ---
 
-## 📄 License
+## Contributing
+
+Contributions welcome! See [docs/research/ROADMAP_RESEARCH.md](docs/research/ROADMAP_RESEARCH.md) for:
+- Current research priorities
+- Collaboration opportunities
+- How to contribute
+
+---
+
+## Citation
+
+```bibtex
+@software{mep2026,
+  title = {MEP: Muon Equilibrium Propagation},
+  author = {MEP Contributors},
+  year = {2026},
+  url = {https://github.com/your-username/mep},
+}
+```
+
+---
+
+## License
 
 MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+*Last updated: 2026-02-18*

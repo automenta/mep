@@ -62,6 +62,10 @@
 
 **Philosophy:** Build undeniable results first, then share. Partnerships are more productive when we have clear advantages to demonstrate.
 
+**Detailed Plans:**
+- [phase2_detailed_plan.md](phase2_detailed_plan.md) — Full 6-month plan
+- [phase2_week1-2.md](phase2_week1-2.md) — Immediate action items
+
 ---
 
 #### Priority 1: O(1) Memory Implementation 🔴 CRITICAL

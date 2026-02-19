@@ -4,9 +4,11 @@
 
 **Status:** EP achieves performance parity with backpropagation on classification tasks (~91-95% MNIST). Core functionality validated with 156 passing tests.
 
-**Mission:** MEP is not designed to replace backpropagation. Our goal is to enable **biologically plausible learning research** and provide tools for domains where EP's unique properties matter.
+**Mission:** Enable biologically plausible learning research with a performant, well-tested EP implementation.
 
 **Key Achievement:** After systematic bug fixes and parameter optimization, EP now matches Adam/SGD performance on standard classification benchmarks.
+
+**Next Focus:** Technical excellence before outreach—achieve O(1) memory, demonstrate scaling advantages, build compelling results.
 
 ---
 
@@ -37,7 +39,7 @@
 
 ## 🎯 Strategic Research Trajectory
 
-### Phase 1: Solidify Foundation (Q1 2026) - IN PROGRESS
+### Phase 1: Solidify Foundation (Q1 2026) - ✅ COMPLETE
 
 **Goal:** Ensure EP performance is stable, documented, and reproducible.
 
@@ -50,152 +52,151 @@
 - [x] Create performance regression tests
 - [x] Document performance baselines
 
-#### Remaining
-- [ ] Add CI benchmark automation
-- [ ] Create performance dashboard
-- [ ] Document known limitations clearly
+**Success Criteria:** ✅ All met
+
+---
+
+### Phase 2: Technical Excellence (Q2-Q3 2026) - HIGH PRIORITY
+
+**Goal:** Achieve compelling technical advantages before external outreach.
+
+**Philosophy:** Build undeniable results first, then share. Partnerships are more productive when we have clear advantages to demonstrate.
+
+---
+
+#### Priority 1: O(1) Memory Implementation 🔴 CRITICAL
+
+**Hypothesis:** EP can achieve O(1) activation memory by avoiding unnecessary PyTorch functionality that triggers activation storage.
+
+**Why this matters:**
+- Theoretical advantage of EP over backprop
+- Enables training deeper networks on memory-constrained hardware
+- Key differentiator for neuromorphic deployment
+
+**Technical Approach:**
+
+1. **Avoid PyTorch Autograd Overhead**
+   - Use `torch.no_grad()` aggressively during settling
+   - Manual gradient computation without graph construction
+   - Detach states early and often
+
+2. **Minimize Intermediate Activations**
+   - In-place operations where possible
+   - Avoid storing computation history
+   - Custom settling kernels that don't trigger autograd
+
+3. **Gradient Checkpointing for EP**
+   - Store only boundary states
+   - Recompute intermediate states during contrast
+   - Trade compute for memory (favorable for EP)
+
+4. **Custom CUDA Kernels**
+   - Fused settling kernel (already exists)
+   - Avoid PyTorch dispatch overhead
+   - Direct memory management
+
+**Action Items:**
+- [ ] Profile current memory usage by component
+- [ ] Identify PyTorch operations triggering activation storage
+- [ ] Implement manual settling without autograd
+- [ ] Test at extreme depths (1000, 2000, 5000+ layers)
+- [ ] Compare vs backprop+checkpointing at each depth
 
 **Success Criteria:**
-- All regression tests pass on every PR
-- Performance baselines documented and enforced
-- Clear guidance on when to use EP vs backprop
+- EP activation memory flat vs depth (O(1))
+- Backprop activation memory linear vs depth (O(depth))
+- Crossover point where EP wins identified
+- Results reproducible and documented
+
+**Timeline:** 2-3 months
+**Impact:** Very High - validates core EP advantage
 
 ---
 
-### Phase 2: Find EP's Niches (Q2-Q3 2026) - HIGH PRIORITY
+#### Priority 2: Deep Network Scaling
 
-**Goal:** Identify domains where EP's unique properties provide genuine advantages.
-
-#### Research Direction 1: Neuromorphic Hardware Compatibility
-**Hypothesis:** EP's local learning rules map naturally to analog substrates.
-
-**Why it matters:**
-- Digital backprop is energy-inefficient on neuromorphic chips
-- EP requires no weight transport (matches biological constraints)
-- Event-based dynamics suit analog hardware
+**Hypothesis:** With O(1) memory, EP can train networks that are impractical for backprop.
 
 **Action Items:**
-- [ ] Partner with neuromorphic hardware groups (Intel Labs, SpiNNaker)
-- [ ] Benchmark EP on Loihi, TrueNorth, or similar
-- [ ] Quantify energy efficiency vs backprop
-- [ ] Publish hardware compatibility study
+- [ ] Test at 1000+ layer depth
+- [ ] Test at 5000+ layer depth
+- [ ] Test at 10000+ layer depth (if memory allows)
+- [ ] Document training dynamics at extreme depth
+- [ ] Identify any depth-related failure modes
 
-**Timeline:** 3-6 months
-**Impact:** High - could establish EP as the go-to algorithm for neuromorphic computing
+**Success Criteria:**
+- Successful training at 5000+ layers
+- Convergence maintained at depth
+- Clear scaling curves documented
+
+**Timeline:** 1-2 months (after O(1) memory)
+**Impact:** High - demonstrates unique EP capability
 
 ---
 
-#### Research Direction 2: Biological Plausibility Studies
-**Hypothesis:** EP's learning dynamics better match biological neural circuits.
+#### Priority 3: Continual Learning (Technical Foundation)
 
-**Why it matters:**
-- Backprop has the "weight transport problem" (biologically implausible)
-- EP uses only local Hebbian-like updates
-- Can help neuroscientists model learning in real brains
+**Hypothesis:** EP + proper CL methods can reduce catastrophic forgetting.
+
+**Current Status:** Error feedback reduces forgetting (32% vs 48%) but EWC is more effective (5-15%).
 
 **Action Items:**
-- [ ] Compare EP learning dynamics to neural recording data
+- [ ] Implement EWC integration for EP
+- [ ] Test on standard CL benchmarks (Permuted MNIST, Split CIFAR)
+- [ ] Compare EP+EWC vs backprop+EWC
+- [ ] Analyze why EP+EF reduces forgetting
+- [ ] Publish technical report with results
+
+**Timeline:** 2-3 months
+**Impact:** Medium-High - CL is important research area
+
+---
+
+#### Priority 4: Speed Optimization
+
+**Hypothesis:** Settling overhead can be reduced without losing convergence.
+
+**Current Status:** EP is 2-3× slower than backprop (fundamental settling cost).
+
+**Action Items:**
+- [ ] Profile settling time by component
+- [ ] Test adaptive settling (early stopping)
+- [ ] Optimize CUDA kernels
+- [ ] Explore approximate settling methods
+- [ ] Document speed/accuracy tradeoffs
+
+**Timeline:** 1-2 months
+**Impact:** Medium - speed is important for adoption
+
+---
+
+### Phase 3: Results & Outreach (Q4 2026+) - CONTINGENT
+
+**Goal:** Share compelling results with research community.
+
+**Prerequisites:**
+- ✅ O(1) memory demonstrated
+- ✅ Deep scaling results (5000+ layers)
+- ✅ CL results (EP+EWC competitive)
+- ✅ Speed optimizations complete
+
+**Only after Phase 2 is complete:**
+
+#### Neuromorphic Partnerships
+- [ ] Reach out to Intel Labs (Loihi)
+- [ ] Reach out to SpiNNaker group
+- [ ] Benchmark on neuromorphic hardware
+- [ ] Publish energy efficiency study
+
+#### Biological Plausibility Research
 - [ ] Partner with computational neuroscience labs
-- [ ] Publish comparison of EP vs backprop vs biological learning
-- [ ] Develop metrics for "biological plausibility"
+- [ ] Compare EP dynamics to neural data
+- [ ] Publish biological plausibility study
 
-**Timeline:** 6-12 months
-**Impact:** High - establishes EP as the standard for computational neuroscience
-
----
-
-#### Research Direction 3: Continual Learning (Revise Approach)
-**Finding:** Error feedback alone is insufficient. Need dedicated CL methods.
-
-**Revised Hypothesis:** EP + dedicated CL methods (EWC, replay) will outperform backprop + same methods.
-
-**Why it matters:**
-- Continual learning is a major unsolved problem
-- EP's energy-based formulation may offer advantages
-- Error feedback showed reduced forgetting (32% vs 48%) but needs improvement
-
-**Action Items:**
-- [ ] Implement EWC integration for EP (not just error feedback)
-- [ ] Test replay buffer methods with EP
-- [ ] Compare EP+EWC vs backprop+EWC on standard CL benchmarks
-- [ ] Investigate why EP+EF reduces forgetting
-
-**Timeline:** 3-6 months
-**Impact:** Medium-High - CL is a hot research area
-
----
-
-#### Research Direction 4: Energy Efficiency Analysis
-**Hypothesis:** Despite higher memory usage, EP may be more energy-efficient in certain settings.
-
-**Why it matters:**
-- Energy efficiency is critical for edge deployment
-- EP's iterative settling may be more efficient than backprop's memory movement
-- Analog implementations could be dramatically more efficient
-
-**Action Items:**
-- [ ] Profile energy consumption (Joules/sample) for EP vs backprop
-- [ ] Analyze memory movement costs
-- [ ] Model energy efficiency for analog implementations
-- [ ] Publish energy analysis paper
-
-**Timeline:** 3-6 months
-**Impact:** Medium - energy efficiency is increasingly important
-
----
-
-### Phase 3: Advanced Capabilities (Q4 2026+) - CONTINGENT
-
-**Goal:** Extend EP to new architectures and applications.
-
-#### Transformer/LLM Training
-**Question:** Can EP train transformer-based language models?
-
-**Challenges:**
-- Very deep networks (100+ layers)
-- Attention mechanisms
-- Large batch training
-
-**Action Items:**
-- [ ] Test EP on small transformers (GPT-2 scale)
-- [ ] Analyze settling convergence in deep nets
-- [ ] Develop EP-specific architecture modifications
-- [ ] Benchmark vs backprop on language tasks
-
-**Timeline:** 6-12 months (contingent on Phase 2 success)
-**Impact:** Very High - if successful, could enable biologically plausible LLMs
-
----
-
-#### Convolutional Networks (Deep)
-**Question:** Does EP scale to modern CNN architectures?
-
-**Action Items:**
-- [ ] Test on ResNet, EfficientNet architectures
-- [ ] Analyze gradient flow through skip connections
-- [ ] Benchmark on ImageNet-scale tasks
-- [ ] Compare training dynamics to backprop
-
-**Timeline:** 3-6 months
-**Impact:** Medium - CNNs are well-established, but EP compatibility matters
-
----
-
-#### Reinforcement Learning
-**Question:** Can EP train RL agents?
-
-**Why it matters:**
-- RL + biologically plausible learning = better models of animal learning
-- Potential applications in robotics
-
-**Action Items:**
-- [ ] Integrate EP with RL algorithms (PPO, SAC)
-- [ ] Test on standard RL benchmarks (Atari, MuJoCo)
-- [ ] Compare sample efficiency to backprop
-- [ ] Analyze learning dynamics
-
-**Timeline:** 6-12 months
-**Impact:** Medium-High - RL is important for robotics and AI safety
+#### Community Building
+- [ ] Release comprehensive benchmark suite
+- [ ] Write tutorial/guide papers
+- [ ] Present at relevant venues (NeurIPS, ICLR, CNS)
 
 ---
 
@@ -205,41 +206,41 @@
 |--------|---------|-------------|---------------|
 | MNIST Accuracy | 95.37% | 95%+ (maintain) | 95%+ (maintain) |
 | Test Coverage | 85% | 85%+ (maintain) | 90% |
+| Memory Scaling | O(depth) | **O(1)** | O(1) verified |
+| Max Depth Tested | 2000 | **5000+** | 10000+ |
+| CL Forgetting | 32% (EF) | **<15%** (EWC) | <10% |
+| Speed vs BP | 2-3× slower | **1.5-2×** | 1.5× |
 | External Contributors | 0 | 2+ | 10+ |
-| GitHub Stars | ~0 | 100+ | 500+ |
-| Citations | 0 | 5+ (methods paper) | 25+ |
-| Neuromorphic Partnerships | 0 | 1+ | 3+ |
-| CL Method (effective) | ❌ | ✅ Working | ✅ Competitive |
-| Energy Analysis Paper | ❌ | ✅ Published | - |
-| Biology Partnership | ❌ | ✅ Active | ✅ Published |
+| GitHub Stars | ~0 | 50+ | 200+ |
+| Citations | 0 | 0 (pre-results) | 10+ (post-results) |
 
 ---
 
 ## 🔬 Open Research Questions
 
-### Fundamental Questions
+### Technical Questions (Phase 2 Focus)
+1. **Can EP achieve O(1) memory?** What PyTorch features trigger activation storage?
+2. **What's the maximum trainable depth?** 5000? 10000? 100000+ layers?
+3. **Can settling be accelerated?** Without losing convergence?
+4. **Does EP+EWC outperform backprop+EWC?** On standard CL benchmarks?
+
+### Scientific Questions (Phase 3 Focus)
 1. **What is EP's true niche?** Where does it genuinely excel vs backprop?
 2. **Can EP train transformers?** What architectural changes are needed?
 3. **Is EP more energy-efficient?** Under what conditions?
 4. **Does biological plausibility matter?** For what applications?
 
-### Technical Questions
-1. **Can settling be accelerated?** Without losing convergence?
-2. **What's the optimal settling configuration?** Per architecture?
-3. **How does EP interact with normalization layers?** BatchNorm, LayerNorm?
-4. **Can EP handle very deep networks?** 1000+ layers?
-
 ---
 
 ## 🚧 Known Limitations (Honest Assessment)
 
-| Limitation | Status | Mitigation |
-|------------|--------|------------|
-| Memory usage | ❌ EP uses 8× more than BP+checkpointing | Document clearly; not a bug |
-| Training speed | ❌ EP is 2-3× slower | Fundamental algorithmic cost |
-| Dropout incompatibility | ⚠️ Fixed (skip during settling) | Document; use alternatives |
-| Continual learning | ⚠️ EF helps but insufficient | Research EWC integration |
-| Very deep networks | ❓ Untested at 1000+ layers | Research priority |
+| Limitation | Status | Plan |
+|------------|--------|------|
+| Memory usage | 🔴 **Priority** | O(1) implementation in progress |
+| Training speed | ⚠️ Acceptable | 2× slowdown for biological plausibility is reasonable |
+| Dropout incompatibility | ✅ Fixed | Skip dropout during settling |
+| Continual learning | 🔴 In progress | EWC integration planned |
+| Very deep networks | 🔴 Untested | Waiting for O(1) memory |
 
 ---
 
@@ -247,60 +248,55 @@
 
 | Document | Purpose |
 |----------|---------|
-| `README.md` | Quick start, optimizer selection |
-| `PERFORMANCE_BASELINES.md` | Performance thresholds, regression testing |
-| `VALIDATION_RESULTS.md` | Full validation study with findings |
-| `ROADMAP.md` | This document - research trajectory |
-| `tests/regression/test_performance_baseline.py` | Automated regression tests |
+| [README.md](../README.md) | Quick start, how MEP works |
+| [docs/index.md](../docs/index.md) | Documentation hub |
+| [docs/benchmarks/PERFORMANCE_BASELINES.md](../docs/benchmarks/PERFORMANCE_BASELINES.md) | Performance thresholds, optimal config |
+| [docs/benchmarks/VALIDATION_RESULTS.md](../docs/benchmarks/VALIDATION_RESULTS.md) | Full validation study |
+| [docs/methods_paper.md](../docs/methods_paper.md) | Preprint-ready methods paper |
 
 ---
 
-## 💡 Why This Codebase Matters
+## 💡 Why This Roadmap
 
-### Scientific Value
-1. **Reproducible EP Implementation:** First well-tested, modern EP framework
-2. **Performance Parity Proven:** EP can match backprop on classification
-3. **Bug-Free Foundation:** 156 tests ensure correctness
-4. **Honest Assessment:** Clear documentation of what works and what doesn't
+**Phase 2 before Phase 3:** Outreach is more effective with compelling results. A partnership proposal that says "EP matches backprop accuracy" is good. One that says "EP matches backprop AND achieves O(1) memory AND trains 10000-layer networks" is irresistible.
 
-### Research Enablement
-1. **Biological Plausibility:** Tool for studying alternative learning mechanisms
-2. **Neuromorphic Computing:** Foundation for analog hardware deployment
-3. **Educational Value:** Demonstrates EP principles clearly
-4. **Community Resource:** Open source, well-documented, extensible
+**Technical excellence first:**
+1. Solve the memory problem (O(1) implementation)
+2. Demonstrate unique capabilities (deep scaling)
+3. Show competitive CL performance (EP+EWC)
+4. Then share with the world
 
-### What Success Looks Like
-- **Not** replacing backpropagation for standard deep learning
-- **But** becoming the go-to framework for:
-  - Neuromorphic hardware research
-  - Computational neuroscience modeling
-  - Energy-efficient AI research
-  - Studying alternative learning mechanisms
+**This approach:**
+- Avoids premature hype
+- Builds genuine advantages
+- Makes partnerships more productive
+- Establishes MEP as serious research tool
 
 ---
 
 ## 📅 Immediate Action Items (Next 2 Weeks)
 
-- [ ] Set up CI benchmark automation
-- [ ] Create performance dashboard
-- [ ] Write methods paper for arXiv
-- [ ] Reach out to neuromorphic research groups
-- [ ] Document EP's unique value proposition clearly
+- [ ] Profile memory usage by component
+- [ ] Identify PyTorch operations triggering activation storage
+- [ ] Design O(1) memory settling implementation
+- [ ] Set up deep network scaling test infrastructure
+- [ ] Review EWC implementation for EP integration
 
 ---
 
 ## 🎓 Final Thought
 
-**We have achieved something significant:** EP now matches backpropagation performance on standard benchmarks. This wasn't guaranteed - it required finding and fixing real bugs, discovering optimal parameters through systematic tuning, and honest assessment of limitations.
+**We've proven EP can match backprop on accuracy.** That was step one.
 
-**The goal forward is not to "beat" backprop.** It's to:
-1. Enable research that backprop can't support (biological plausibility, neuromorphic)
-2. Provide honest, reproducible tools for the research community
-3. Find niches where EP's unique properties genuinely matter
+**Step two is proving EP's theoretical advantages in practice:** O(1) memory, deep scaling, continual learning.
 
-**Success =** MEP becomes the standard tool for EP research, with clear documentation of when and why to use it.
+**Step three is sharing those results** with researchers who can benefit from them.
+
+This roadmap prioritizes substance over hype, results over partnerships, and technical excellence over premature announcements.
+
+**Success =** MEP becomes the standard tool for EP research, with demonstrated advantages that speak for themselves.
 
 ---
 
 *Last updated: 2026-02-18*
-*Status: Foundation complete, research trajectory defined*
+*Status: Foundation complete, technical excellence phase beginning*

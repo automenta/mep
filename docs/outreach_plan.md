@@ -1,12 +1,38 @@
 # MEP Research Collaboration Outreach
 
-## Phase 2 Research: Finding EP's Niches
+## Phase 2 Research: Technical Excellence First
 
-This document outlines outreach strategy for Phase 2 research partnerships.
+**Strategy:** Build compelling technical results BEFORE outreach. Partnerships are more productive when we have clear advantages to demonstrate.
+
+**Current Priority:** O(1) memory implementation, deep scaling results, CL performance.
+
+**Outreach Timeline:** Q4 2026+ (after Phase 2 technical goals achieved)
 
 ---
 
-## Target Research Areas
+## Why Defer Outreach?
+
+**Outreach is more effective with results:**
+
+| Outreach Timing | Message | Likely Response |
+|-----------------|---------|-----------------|
+| **Now** | "EP matches backprop accuracy" | Interesting, but so what? |
+| **After Phase 2** | "EP matches backprop AND achieves O(1) memory AND trains 10000-layer networks" | This is compelling—let's collaborate! |
+
+**What we need before outreach:**
+1. ✅ Performance parity (done)
+2. 🔲 O(1) memory demonstrated
+3. 🔲 Deep scaling results (5000+ layers)
+4. 🔲 Competitive CL results (EP+EWC)
+
+**Then** partnerships become:
+- More productive (we have clear use cases)
+- More equitable (we bring concrete value)
+- More likely to succeed (reduced risk for partners)
+
+---
+
+## Target Research Areas (Post-Phase 2)
 
 ### 1. Neuromorphic Hardware (Highest Priority)
 

@@ -261,16 +261,16 @@ MEP provides a well-tested, performant implementation for researchers studying:
 - [x] Optimal parameters discovered
 - [x] Documentation complete
 
-### Phase 2: Find EP's Niches (Q2-Q3 2026)
-- [ ] Neuromorphic hardware partnerships
-- [ ] Biological plausibility studies
-- [ ] Continual learning (EWC integration)
-- [ ] Energy efficiency analysis
+### Phase 2: Technical Excellence (Q2-Q3 2026) - IN PROGRESS
+- [ ] **O(1) memory implementation** - Avoid PyTorch activation overhead
+- [ ] **Deep network scaling** - Train 5000-10000+ layer networks
+- [ ] **Continual learning** - EP+EWC integration
+- [ ] **Speed optimization** - Reduce settling overhead
 
-### Phase 3: Advanced Capabilities (Q4 2026+)
-- [ ] Transformer/LLM training
-- [ ] Deep CNN scaling
-- [ ] Reinforcement learning integration
+### Phase 3: Results & Outreach (Q4 2026+)
+- [ ] Neuromorphic hardware demos
+- [ ] Biological plausibility studies
+- [ ] Community building
 
 📋 **Full roadmap:** [docs/research/ROADMAP_RESEARCH.md](docs/research/ROADMAP_RESEARCH.md)
 

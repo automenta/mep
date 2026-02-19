@@ -199,15 +199,16 @@ def test_mnist_accuracy(depths=[10, 50, 100], epochs=3):
         # Create model
         model = DeepMLP(input_dim=784, hidden_dim=128, num_layers=depth, output_dim=10).to(device)
         
-        # Create optimizer
+        # Create optimizer - use working config
         opt = EPOptimizer(
             model.parameters(),
             model=model,
             mode='ep',
             lr=0.01,
-            settle_steps=10,
-            settle_lr=0.2,
+            settle_steps=30,    # More settling steps
+            settle_lr=0.15,     # Original working value
             beta=0.5,
+            loss_type='mse',    # Use mse (working config)
         )
         
         # Training loop
@@ -340,7 +341,7 @@ def test_permuted_mnist_cl(num_tasks=5, epochs=2, ewc_lambda=100):
             # Create model (fresh for each method)
             model = DeepMLP(input_dim=784, hidden_dim=256, num_layers=10, output_dim=10).to(device)
             
-            # Create optimizer
+            # Create optimizer - use working config (mse loss_type)
             if use_ep:
                 opt = EPOptimizer(
                     model.parameters(),
@@ -348,8 +349,10 @@ def test_permuted_mnist_cl(num_tasks=5, epochs=2, ewc_lambda=100):
                     mode='ep',
                     lr=0.01,
                     ewc_lambda=ewc_lambda if use_ewc else 0,
-                    settle_steps=10,
-                    settle_lr=0.2,
+                    settle_steps=30,  # More settling steps
+                    settle_lr=0.15,   # Original working value
+                    beta=0.5,
+                    loss_type='mse',  # Use mse (working config)
                 )
             else:
                 opt = EPOptimizer(

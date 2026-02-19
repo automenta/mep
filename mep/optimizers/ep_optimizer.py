@@ -218,7 +218,7 @@ class EPOptimizer:
             beta=beta,
             settle_steps=settle_steps,
             settle_lr=settle_lr,
-            gradient_method=gradient_method,
+            gradient_method='autograd',  # Must use autograd for settling (analytic is broken)
             ewc_lambda=ewc_lambda,
             ns_steps=ns_steps,
             gamma=gamma,
@@ -381,21 +381,22 @@ class EPOptimizer:
         """Capture initial states."""
         states = []
         handles = []
-        
+
         def hook(m, i, o):
-            states.append(o.detach().float().clone())
-        
+            # Must set requires_grad=True for settling to work
+            states.append(o.detach().float().clone().requires_grad_(True))
+
         for item in self.structure:
             if item['type'] in ('layer', 'attention'):
                 handles.append(item['module'].register_forward_hook(hook))
-        
+
         try:
             with torch.no_grad():
                 model_output = self.model(x)
         finally:
             for h in handles:
                 h.remove()
-        
+
         return states
     
     def _analytic_gradients(
@@ -477,41 +478,37 @@ class EPOptimizer:
         beta: float,
         use_grad: bool = False,
     ) -> torch.Tensor:
-        """Compute energy from settled states."""
+        """Compute energy from settled states.
+        
+        Note: Internal energy is ALWAYS MSE (state consistency).
+        The loss_type only affects the nudge term, not the internal energy.
+        """
         device = x.device
         batch_size = x.shape[0]
-        
+
         E = torch.tensor(0.0, device=device, dtype=torch.float32)
         prev = x
         state_idx = 0
-        
+
         if use_grad:
             # Forward pass with gradients for parameter updates
             for item in self.structure:
                 if item['type'] == 'layer':
                     if state_idx >= len(states):
                         break
-                    
+
                     state = states[state_idx]
                     h = item['module'](prev)
-                    
-                    if self.config.loss_type == 'cross_entropy' and state_idx == len(self._state_indices) - 1:
-                        # KL divergence for output layer
-                        eps = 1e-8
-                        state_sm = F.softmax(state.float() / self.config.softmax_temperature, dim=1)
-                        h_sm = F.softmax(h.float() / self.config.softmax_temperature, dim=1)
-                        kl_div = F.kl_div(torch.log(state_sm + eps), h_sm, reduction='sum')
-                        E = E + kl_div / batch_size
-                    else:
-                        # MSE for hidden layers
-                        E = E + 0.5 * F.mse_loss(h.float(), state.float(), reduction='sum') / batch_size
-                    
+
+                    # Always use MSE for internal energy (state consistency)
+                    E = E + 0.5 * F.mse_loss(h.float(), state.float(), reduction='sum') / batch_size
+
                     prev = state.to(x.dtype)
                     state_idx += 1
                 elif item['type'] == 'act':
                     prev = item['module'](prev)
-            
-            # Nudge term
+
+            # Nudge term - this is where loss_type matters
             if target_vec is not None and beta > 0:
                 if self.config.loss_type == 'cross_entropy':
                     E = E + beta * F.cross_entropy(prev.float(), target_vec, reduction='sum', label_smoothing=0.1) / batch_size
@@ -531,25 +528,19 @@ class EPOptimizer:
                     if item['type'] == 'layer':
                         if state_idx >= len(states):
                             break
-                        
+
                         state = states[state_idx]
                         h = item['module'](prev)
-                        
-                        if self.config.loss_type == 'cross_entropy' and state_idx == len(self._state_indices) - 1:
-                            eps = 1e-8
-                            state_sm = F.softmax(state.float() / self.config.softmax_temperature, dim=1)
-                            h_sm = F.softmax(h.float() / self.config.softmax_temperature, dim=1)
-                            kl_div = F.kl_div(torch.log(state_sm + eps), h_sm, reduction='sum')
-                            E = E + kl_div / batch_size
-                        else:
-                            E = E + 0.5 * F.mse_loss(h.float(), state.float(), reduction='sum') / batch_size
-                        
+
+                        # Always use MSE for internal energy (state consistency)
+                        E = E + 0.5 * F.mse_loss(h.float(), state.float(), reduction='sum') / batch_size
+
                         prev = state.to(x.dtype)
                         state_idx += 1
                     elif item['type'] == 'act':
                         prev = item['module'](prev)
-                
-                # Nudge term
+
+                # Nudge term - this is where loss_type matters
                 if target_vec is not None and beta > 0:
                     if self.config.loss_type == 'cross_entropy':
                         E = E + beta * F.cross_entropy(prev.float(), target_vec, reduction='sum', label_smoothing=0.1) / batch_size
@@ -562,7 +553,7 @@ class EPOptimizer:
                         else:
                             target_one_hot = target_vec
                         E = E + beta * F.mse_loss(prev.float(), target_one_hot, reduction='sum') / batch_size
-        
+
         return E
     
     def consolidate_task(self, data_loader, task_id: int, device: str = 'cuda'):

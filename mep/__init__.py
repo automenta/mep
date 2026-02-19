@@ -37,14 +37,17 @@ from .optimizers import (
     EnergyFunction,
     Settler,
     ModelInspector,
+    # Unified optimizer (recommended)
+    EPOptimizer,
 )
 from .optimizers.monitor import EPMonitor, monitor_ep_training
-from .presets import smep, sdmep, local_ep, natural_ep, muon_backprop
+from .optimizers.ep_optimizer import smep, smep_fast, sdmep, local_ep, natural_ep, muon_backprop
 
 __version__ = "0.3.0"
 __all__ = [
     # Core optimizer
     "CompositeOptimizer",
+    "EPOptimizer",  # Unified optimizer (recommended)
     # Strategy classes (for custom compositions)
     "BackpropGradient",
     "EPGradient",
@@ -64,8 +67,9 @@ __all__ = [
     "ModelInspector",
     "EPMonitor",
     "monitor_ep_training",
-    # Preset factories
+    # Preset factories (backward compatible)
     "smep",
+    "smep_fast",
     "sdmep",
     "local_ep",
     "natural_ep",

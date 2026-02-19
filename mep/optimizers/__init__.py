@@ -59,6 +59,19 @@ from .o1_memory_v2 import (
     energy_from_states_minimal,
     O1MemoryEPv2,
 )
+from .ewc import (
+    EWCRegularizer,
+    EPOptimizerWithEWC,
+    TaskMemory,
+)
+from .ep_optimizer import (
+    EPOptimizer,
+    EPConfig,
+    EWCState,
+    smep,
+    smep_fast,
+    muon_backprop,
+)
 
 __all__ = [
     # Core optimizer
@@ -89,15 +102,27 @@ __all__ = [
     "EnergyFunction",
     "Settler",
     "ModelInspector",
-    # O(1) memory prototype v1
+    # Unified EP optimizer (recommended)
+    "EPOptimizer",
+    "EPConfig",
+    "EWCState",
+    # Legacy presets (backward compatible)
+    "smep",
+    "smep_fast",
+    "muon_backprop",
+    # O(1) memory prototype v1 (legacy)
     "manual_energy_compute",
     "settle_manual",
     "energy_from_states",
     "O1MemoryEP",
-    # O(1) memory prototype v2 (analytic gradients)
+    # O(1) memory prototype v2 (legacy)
     "analytic_state_gradients",
     "settle_manual_o1",
     "manual_energy_compute_o1",
     "energy_from_states_minimal",
     "O1MemoryEPv2",
+    # EWC for continual learning (legacy)
+    "EWCRegularizer",
+    "EPOptimizerWithEWC",
+    "TaskMemory",
 ]

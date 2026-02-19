@@ -68,10 +68,31 @@ This document establishes performance baselines for the MEP optimizer to prevent
 |-----------|---------------|-------|
 | SGD | 1.0× | Baseline |
 | Adam | 1.0× | Similar to SGD |
-| SMEP | 2.0-2.5× | Settling overhead |
-| EQPROP | 1.5-2.0× | No Muon, faster |
+| SMEP (default, 30 steps) | 10-15× | Default settling settings |
+| SMEP (optimized, 10 steps) | 4-6× | Reduced settling steps |
+| SMEP (analytic gradients) | 3-5× | With o1_memory_v2 |
+| EQPROP | 1.5-2.0× | No Muon, fewer settling steps |
 
-**Key Finding:** EP is fundamentally 2-3× slower due to settling iterations. This is an algorithmic cost, not an implementation issue.
+**Key Finding:** EP speed is **proportional to settling steps**. The 2-3× figure assumes optimized settings:
+- 10-15 settling steps (vs 30 default)
+- Analytic gradients (o1_memory_v2.py)
+- Adaptive settling (early stopping)
+
+**Default settings (30 steps, autograd gradients) result in 10-15× slower training.**
+
+#### Speed Optimization Guide
+
+```python
+# Default (13x slower)
+optimizer = smep(model.parameters(), model=model, settle_steps=30)
+
+# Optimized (4-6x slower)
+optimizer = smep(model.parameters(), model=model, settle_steps=10, settle_lr=0.2)
+
+# With analytic gradients (3-5x slower)
+from mep.optimizers import O1MemoryEPv2
+optimizer = O1MemoryEPv2(model.parameters(), model=model, settle_steps=10)
+```
 
 ## Optimal Configuration
 
